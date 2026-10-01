@@ -56,3 +56,38 @@ ltex.dictionary*
 
 # Translation cache
 .translation_cache.json
+
+# --- Personal data / local instances (never push) ---
+# RimSort local settings & runtime storage if created inside the repo
+settings.json
+instances/
+instance_*/
+modlists/
+dbs/
+backups/
+themes/user_*/
+browser/
+local_settings.json
+
+# RimWorld / mod data
+ModsConfig.xml
+ModsConfig*.xml
+*_ModList*.xml
+mod_list*.xml
+Mod?pack*.xml
+Patches/
+Defs/
+Assemblies/
+About/
+loadFolders.xml
+mod-thumbnail.png
+*.pak
+
+# Personal notes / API keys / local AI config
+*.local.json
+*.local.yaml
+*.local.yml
+mcp.local.json
+secrets*
+.api_keys
+opencode.local.json

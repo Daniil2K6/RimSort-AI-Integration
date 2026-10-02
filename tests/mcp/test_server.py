@@ -26,7 +26,7 @@ def _tool_text(result: Any) -> str:
     """Return the text payload of a CallToolResult (mypy-safe)."""
     item = result.content[0]
     if not isinstance(item, TextContent):
-        raise AssertionError(f"expected TextContent, got {type(item).__name__}")
+        raise TypeError(f"expected TextContent, got {type(item).__name__}")
     return item.text
 
 
@@ -36,7 +36,7 @@ def _server_resource_text(server: Any, uri: str) -> str:
     contents: list[Any] = list(result)
     body: Any = contents[0].content
     if not isinstance(body, str):
-        raise AssertionError("expected text resource body")
+        raise TypeError("expected text resource body")
     return body
 
 
@@ -44,9 +44,7 @@ def _client_resource_payload(result: Any) -> Any:
     """Parse a client-side ReadResourceResult into JSON (mypy-safe)."""
     item = result.contents[0]
     if not isinstance(item, TextResourceContents):
-        raise AssertionError(
-            f"expected TextResourceContents, got {type(item).__name__}"
-        )
+        raise TypeError(f"expected TextResourceContents, got {type(item).__name__}")
     return json.loads(item.text)
 
 
@@ -95,46 +93,48 @@ def test_stdio_end_to_end(mcp_env: MCPEnv, monkeypatch: pytest.MonkeyPatch) -> N
             cwd=str(project_root),
             env=dict(os.environ),
         )
-        async with stdio_client(params) as (read, write):
-            async with ClientSession(read, write) as session:
-                init = await session.initialize()
-                assert init.server_info.name == "rimsort"
+        async with (
+            stdio_client(params) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            init = await session.initialize()
+            assert init.server_info.name == "rimsort"
 
-                tools = await session.list_tools()
-                assert {tool.name for tool in tools.tools} == EXPECTED_TOOLS
+            tools = await session.list_tools()
+            assert {tool.name for tool in tools.tools} == EXPECTED_TOOLS
 
-                status = await session.call_tool("get_status", {})
-                assert status.is_error is False
-                payload = json.loads(_tool_text(status))
-                assert payload["instance"] == "Default"
-                assert payload["game_version"] == "1.5.4104 rev1234"
+            status = await session.call_tool("get_status", {})
+            assert status.is_error is False
+            payload = json.loads(_tool_text(status))
+            assert payload["instance"] == "Default"
+            assert payload["game_version"] == "1.5.4104 rev1234"
 
-                active = await session.call_tool("get_active_modlist", {})
-                assert active.is_error is False
-                active_payload = json.loads(_tool_text(active))
-                assert active_payload["count"] == 4
+            active = await session.call_tool("get_active_modlist", {})
+            assert active.is_error is False
+            active_payload = json.loads(_tool_text(active))
+            assert active_payload["count"] == 4
 
-                error = await session.call_tool(
-                    "get_mod_details", {"package_id": "no.such.mod"}
-                )
-                assert error.is_error is True
-                assert "No installed mod" in _tool_text(error)
+            error = await session.call_tool(
+                "get_mod_details", {"package_id": "no.such.mod"}
+            )
+            assert error.is_error is True
+            assert "No installed mod" in _tool_text(error)
 
-                prompts = await session.list_prompts()
-                assert {prompt.name for prompt in prompts.prompts} == {
-                    "assemble_modpack",
-                    "troubleshoot_active_list",
-                }
+            prompts = await session.list_prompts()
+            assert {prompt.name for prompt in prompts.prompts} == {
+                "assemble_modpack",
+                "troubleshoot_active_list",
+            }
 
-                resources = await session.list_resources()
-                assert {str(r.uri) for r in resources.resources} == {
-                    "rimsort://status",
-                    "rimsort://modlist/active",
-                }
+            resources = await session.list_resources()
+            assert {str(r.uri) for r in resources.resources} == {
+                "rimsort://status",
+                "rimsort://modlist/active",
+            }
 
-                resource = await session.read_resource("rimsort://status")
-                resource_payload = _client_resource_payload(resource)
-                assert resource_payload["instance"] == "Default"
+            resource = await session.read_resource("rimsort://status")
+            resource_payload = _client_resource_payload(resource)
+            assert resource_payload["instance"] == "Default"
 
     asyncio.run(asyncio.wait_for(session_flow(), timeout=_STDIO_TIMEOUT))
 

@@ -79,9 +79,9 @@ def do_topo_sort(
 
     try:
         sorted_dependencies = list(toposort(dependency_graph))
-    except CircularDependencyError as e:
+    except CircularDependencyError:
         find_circular_dependencies(dependency_graph)
-        raise e
+        raise
 
     reordered = order_topo_levels(sorted_dependencies, active_mod_paths, mods_metadata)
 

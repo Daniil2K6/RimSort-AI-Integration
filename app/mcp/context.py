@@ -12,7 +12,7 @@ import os
 import sys
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -36,9 +36,9 @@ from app.models.metadata.metadata_structure import (
     ModType,
 )
 from app.models.mod_list import (
-    _SOURCE_PRIORITY_DEFAULT,
-    _SOURCE_PRIORITY_STEAM,
     _STEAM_SUFFIX,
+    SOURCE_PRIORITY_DEFAULT,
+    SOURCE_PRIORITY_STEAM,
 )
 from app.utils.app_info import AppInfo
 from app.utils.constants import DEFAULT_INSTANCE_NAME, RIMWORLD_PACKAGE_IDS
@@ -151,7 +151,7 @@ class MCPContext:
         if name in available:
             return name
         if available:
-            fallback = sorted(available)[0]
+            fallback = min(available)
             logger.warning(
                 f"current_instance {name!r} not found, using {fallback!r} instead"
             )
@@ -316,7 +316,7 @@ class MCPContext:
                             external_rule=community_rules.rules[mod.package_id]
                         )
                 return mod
-            except Exception as exc:  # noqa: BLE001 - one bad mod must not kill the scan
+            except Exception as exc:  # one bad mod must not kill the scan
                 logger.error(f"Error parsing mod at path: {mod_path}: {exc}")
                 return None
 
@@ -390,7 +390,7 @@ class MCPContext:
             return None
         backup_dir = AppInfo().backups_folder / "mcp"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.now().strftime(_BACKUP_TIMESTAMP_FORMAT)
+        timestamp = datetime.now(UTC).strftime(_BACKUP_TIMESTAMP_FORMAT)
         target = backup_dir / f"ModsConfig-{timestamp}.xml"
         counter = 1
         while target.exists():
@@ -479,7 +479,7 @@ class MCPContext:
             if not candidate_paths:
                 missing.append(raw_pid)
                 continue
-            priority = _SOURCE_PRIORITY_STEAM if is_steam else _SOURCE_PRIORITY_DEFAULT
+            priority = SOURCE_PRIORITY_STEAM if is_steam else SOURCE_PRIORITY_DEFAULT
             resolved_path = self._pick_path(candidate_paths, priority, seen)
             if resolved_path is None:
                 missing.append(raw_pid)

@@ -11,7 +11,7 @@ import json
 import re
 from collections import Counter
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -202,7 +202,7 @@ def set_active_list(
     """Replace the active mod list wholesale."""
     if not package_ids:
         raise ToolError("package_ids must not be empty")
-    if len(package_ids) != len(set(pid.lower() for pid in package_ids)):
+    if len(package_ids) != len({pid.lower() for pid in package_ids}):
         raise ToolError("package_ids contains duplicates")
 
     if not allow_missing:
@@ -310,7 +310,7 @@ def save_modpack(ctx: MCPContext, name: str) -> dict[str, Any]:
         "count": len(ids),
         "game_version": ctx.game_version,
         "instance": ctx.instance_name,
-        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "saved_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "missing_at_save": missing,
     }
     target = _modpack_path(name)

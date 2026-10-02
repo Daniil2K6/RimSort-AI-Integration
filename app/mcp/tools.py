@@ -244,8 +244,8 @@ def register_tools(mcp: MCPServer, ctx: MCPContext) -> None:
         remove: list[str] | None = None,
         move_id: str = "",
         move_to_index: int = -1,
-        allow_missing: bool = False,
         backup: bool = True,
+        allow_missing: bool = False,
     ) -> dict[str, Any]:
         """Apply delta edits to the active list (cheaper than full rewrite).
 

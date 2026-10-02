@@ -41,7 +41,9 @@ VERSION_PATTERN = re.compile(r"v?\d+[\.\-_]\d+")
 TAG_PREFIX_PATTERN = re.compile(r"^v", re.IGNORECASE)
 
 # API and network constants
-GITHUB_API_URL = "https://api.github.com/repos/Daniil2K6/RimSort-AI-Integration/releases/latest"
+GITHUB_API_URL = (
+    "https://api.github.com/repos/Daniil2K6/RimSort-AI-Integration/releases/latest"
+)
 API_TIMEOUT = 15
 DOWNLOAD_TIMEOUT = 30
 

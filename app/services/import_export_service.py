@@ -188,7 +188,7 @@ class ImportExportService:
         truncated_note = " (truncated)" if truncated else ""
         report = (
             "# RimWorld mod list       "
-            "![](https://github.com/RimSort/RimSort/blob/main/docs/rentry_preview.png?raw=true)"
+            "![](https://github.com/Daniil2K6/RimSort-AI/blob/main/docs/rentry_preview.png?raw=true)"
             f"\nCreated with RimSort {AppInfo().app_version}"
             f"\nMod list was created for game version: `{self.metadata_controller.game_version}`"
             "\n!!! info Local mods are marked as yellow labels with packageid in brackets."
@@ -224,7 +224,7 @@ class ImportExportService:
                         + "?imw=100&imh=100&impolicy=Letterbox"
                     )
                 else:
-                    preview_url = "https://github.com/RimSort/RimSort/blob/main/docs/rentry_steam_icon.png?raw=true"
+                    preview_url = "https://github.com/Daniil2K6/RimSort-AI/blob/main/docs/rentry_steam_icon.png?raw=true"
                 url = steam_url or mod_url
                 if url:
                     report += (

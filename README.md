@@ -3,12 +3,14 @@
     <p align="center">A free and open source multi-platform mod manager for the video game RimWorld.<br>
     Built from the ground up to be reliable and community managed.<br>
     Includes support for Linux, Mac, and Windows.</p>
-    <p align="center"><strong><a href="https://github.com/RimSort/RimSort/releases">Releases</a> | <a href="https://rimsort.github.io/RimSort/">Wiki</a> | <a href="https://discord.gg/aV7g69JmR2">Discord</a></strong> </p>
-    <p align="center">
-        <a href="https://codecov.io/gh/RimSort/RimSort"><img src="https://codecov.io/gh/RimSort/RimSort/graph/badge.svg" alt="codecov"></a>
-    </p>
+    <p align="center"><strong><a href="https://github.com/Daniil2K6/RimSort-AI/releases">Releases</a> | <a href="https://rimsort.github.io/RimSort/">Wiki</a> | <a href="https://discord.gg/aV7g69JmR2">Discord</a></strong> </p>
     <br><br><br>
 </p>
+
+> **Fork notice:** This repository is a community fork of
+> [RimSort/RimSort](https://github.com/RimSort/RimSort), maintained by Daniil2K6.
+> It adds local AI agent integration (MCP server) on top of the upstream
+> project. All credit for the original work goes to the RimSort team.
 
 ![RimSort Preview](./docs/assets/images/rimsort_preview.png)
 
@@ -41,6 +43,6 @@ If you have an issue, make sure you **checked the [wiki][Wiki]** for a solution.
 - "Update" icon by [Icons8](https://icons8.com) ([icon link](https://icons8.com/icon/aPgBhcyogqyV/update)).
 
 [Wiki]: https://rimsort.github.io/RimSort/
-[Issues]: https://github.com/RimSort/RimSort/issues
-[Releases]: https://github.com/RimSort/RimSort/releases
+[Issues]: https://github.com/Daniil2K6/RimSort-AI/issues
+[Releases]: https://github.com/Daniil2K6/RimSort-AI/releases
 [Discord]: https://discord.gg/aV7g69JmR2

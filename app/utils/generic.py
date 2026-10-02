@@ -834,7 +834,7 @@ def show_no_steam_warning() -> None:
         ),
         details=translate(
             "SteamworksInterface",
-            "If you are still facing issues even after Steam is installed and running, please report this issue to https://github.com/RimSort/RimSort/issues",
+            "If you are still facing issues even after Steam is installed and running, please report this issue to https://github.com/Daniil2K6/RimSort-AI/issues",
         ),
     )
 

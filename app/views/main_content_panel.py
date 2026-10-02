@@ -774,7 +774,7 @@ class MainContent(QObject):
 
     def __do_get_github_release_info(self) -> dict[str, Any]:
         # Parse latest release
-        url = "https://api.github.com/repos/Daniil2K6/RimSort-AI/releases/latest"
+        url = "https://api.github.com/repos/Daniil2K6/RimSort-AI-Integration/releases/latest"
         logger.debug(f"Requesting GitHub release info from: {url}")
 
         raw = http.get(url, timeout=10)

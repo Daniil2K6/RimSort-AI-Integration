@@ -41,7 +41,7 @@ VERSION_PATTERN = re.compile(r"v?\d+[\.\-_]\d+")
 TAG_PREFIX_PATTERN = re.compile(r"^v", re.IGNORECASE)
 
 # API and network constants
-GITHUB_API_URL = "https://api.github.com/repos/Daniil2K6/RimSort-AI/releases/latest"
+GITHUB_API_URL = "https://api.github.com/repos/Daniil2K6/RimSort-AI-Integration/releases/latest"
 API_TIMEOUT = 15
 DOWNLOAD_TIMEOUT = 30
 
@@ -102,7 +102,7 @@ ERR_LAUNCH_FAILED_TEXT = "Failed to launch the update script."
 ERR_UPDATE_FAILED_TITLE = "Update failed"
 ERR_UPDATE_FAILED_TEXT = "An unexpected error occurred during the update process."
 ERR_RETRIEVE_RELEASE_TITLE = "Unable to retrieve latest release information"
-ERR_RETRIEVE_RELEASE_TEXT = "Please check your internet connection and try again, You can also check 'https://github.com/Daniil2K6/RimSort-AI/releases' directly."
+ERR_RETRIEVE_RELEASE_TEXT = "Please check your internet connection and try again, You can also check 'https://github.com/Daniil2K6/RimSort-AI-Integration/releases' directly."
 
 if TYPE_CHECKING:
     from app.models.settings import Settings

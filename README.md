@@ -3,7 +3,7 @@
     <p align="center">A free and open source multi-platform mod manager for the video game RimWorld.<br>
     Built from the ground up to be reliable and community managed.<br>
     Includes support for Linux, Mac, and Windows.</p>
-    <p align="center"><strong><a href="https://github.com/Daniil2K6/RimSort-AI/releases">Releases</a> | <a href="https://rimsort.github.io/RimSort/">Wiki</a> | <a href="https://discord.gg/aV7g69JmR2">Discord</a></strong> </p>
+    <p align="center"><strong><a href="https://github.com/Daniil2K6/RimSort-AI-Integration/releases">Releases</a> | <a href="https://rimsort.github.io/RimSort/">Wiki</a> | <a href="https://discord.gg/aV7g69JmR2">Discord</a></strong> </p>
     <br><br><br>
 </p>
 
@@ -43,6 +43,6 @@ If you have an issue, make sure you **checked the [wiki][Wiki]** for a solution.
 - "Update" icon by [Icons8](https://icons8.com) ([icon link](https://icons8.com/icon/aPgBhcyogqyV/update)).
 
 [Wiki]: https://rimsort.github.io/RimSort/
-[Issues]: https://github.com/Daniil2K6/RimSort-AI/issues
-[Releases]: https://github.com/Daniil2K6/RimSort-AI/releases
+[Issues]: https://github.com/Daniil2K6/RimSort-AI-Integration/issues
+[Releases]: https://github.com/Daniil2K6/RimSort-AI-Integration/releases
 [Discord]: https://discord.gg/aV7g69JmR2

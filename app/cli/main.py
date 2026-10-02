@@ -7,6 +7,7 @@ This module defines the Click command group and registers all subcommands.
 import click
 
 from app.cli.build_db import build_db
+from app.cli.mcp import mcp
 from app.utils.app_info import AppInfo
 
 
@@ -24,6 +25,7 @@ def cli() -> None:
 
 # Register subcommands
 cli.add_command(build_db)
+cli.add_command(mcp)
 
 
 if __name__ == "__main__":

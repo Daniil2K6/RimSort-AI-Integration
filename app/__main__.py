@@ -183,7 +183,12 @@ if __name__ == "__main__":
         runpy.run_path(sys.argv[0], run_name="__main__")
         sys.exit(0)
 
-    if len(sys.argv) > 1 and sys.argv[1] in ["build-db", "--help", "--version"]:
+    if len(sys.argv) > 1 and sys.argv[1] in [
+        "build-db",
+        "mcp",
+        "--help",
+        "--version",
+    ]:
         # CLI mode - import and run without any GUI setup
         try:
             from app.cli.main import cli

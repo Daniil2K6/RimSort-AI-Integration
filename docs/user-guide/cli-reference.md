@@ -30,6 +30,7 @@ The RimSort CLI is designed for users who need to automate RimSort functionality
 Currently available commands:
 
 - `build-db` - Build Steam Workshop metadata databases
+- `mcp` - Run the local MCP (Model Context Protocol) server for AI agents
 
 Additional commands may be added in future versions to support more RimSort functionality.
 
@@ -116,6 +117,35 @@ The `build-db` command uses standard exit codes for automation:
 - **0** - Success: Database built/updated successfully
 - **1** - Error: Validation failed, build failed, or exception occurred
 - **2** - Interrupted: User cancelled with Ctrl+C
+
+### `mcp`
+
+Run the local RimSort MCP server over stdio so that an AI agent (opencode, Claude Code, Cursor, …) can manage your mod lists. The server exposes tools for status, mod inspection, active-list editing, validation, sorting, modpacks, and launching the game.
+
+#### Basic Usage
+
+```bash
+# From source
+uv run python -m app mcp
+
+# With explicit stderr logging
+uv run python -m app mcp --log-level DEBUG
+```
+
+#### Options Reference
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--log-level TEXT` | String | `INFO` | Log verbosity on stderr (`DEBUG`, `INFO`, `WARNING`, `ERROR`). stdout carries only the MCP protocol. |
+
+#### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `RIMSORT_MCP_SETTINGS` | Path to an alternative `settings.json` (tests, isolated instances). Defaults to RimSort's normal settings file. |
+
+{: .note }
+For the full tool reference, client configuration examples, and limitations, see the [MCP Integration guide](mcp).
 
 ### Troubleshooting
 

@@ -101,6 +101,18 @@ def read_mods_config(path: Path) -> ModsConfig | None:
             logger.error("Error reading mods config: Required fields not found.")
             return None
 
+        # A single <li> is parsed as a bare string and an empty element as
+        # a dict, so normalize both to lists (vanilla configs contain a
+        # single active mod and may have an empty knownExpansions tag).
+        if isinstance(activeMods, str):
+            activeMods = [CaseInsensitiveStr(activeMods)]
+        elif isinstance(activeMods, dict) and not activeMods:
+            activeMods = []
+        if isinstance(knownExpansions, str):
+            knownExpansions = [CaseInsensitiveStr(knownExpansions)]
+        elif isinstance(knownExpansions, dict) and not knownExpansions:
+            knownExpansions = []
+
         if (
             not isinstance(version, str)
             or not isinstance(activeMods, list)

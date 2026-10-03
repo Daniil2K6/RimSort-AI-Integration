@@ -43,8 +43,4 @@ class AiTabController(BaseTabController):
             self.dialog.ai_system_prompt_edit.toPlainText().strip()
             == DEFAULT_SYSTEM_PROMPT.strip()
         )
-        self.dialog.ai_prompt_status_label.setText(
-            self.dialog.tr("Using the built-in default prompt")
-            if is_default
-            else self.dialog.tr("Custom prompt")
-        )
+        self.dialog.update_ai_prompt_status(is_default)

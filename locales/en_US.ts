@@ -84,6 +84,57 @@
     </message>
 </context>
 <context>
+    <name>ChatPanel</name>
+    <message>
+        <source>Ask about your mods... (Enter to send, Shift+Enter for newline)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Settings</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clear</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stop</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Send</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Set the API key and model in Settings -&gt; AI Assistant first.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Confirm AI action</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The assistant wants to run:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This changes your mod data (ModsConfig.xml, modpacks) or launches the game. Approve only if you asked for this.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Run</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Cancel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Thinking...</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>CollectionImport</name>
     <message>
         <source>Add Workshop collection link</source>
@@ -2388,6 +2439,10 @@ Manage mods installed from GitHub releases.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>AI Assistant</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Steam Client Integration</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2534,6 +2589,10 @@ Manage mods installed from GitHub releases.</source>
     </message>
     <message>
         <source>Show Translation Status</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>AI Assistant</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -4981,6 +5040,50 @@ Name of folder will be used as name of the theme and any invalid theme will be i
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>AI Assistant</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>API Endpoint</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Any OpenAI-compatible endpoint works: OpenAI, OpenRouter, LM Studio, Ollama, vLLM, ...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Base URL:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>API key:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Model:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>System Prompt</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Instructions sent to the model before every conversation. The built-in default already covers assistant behaviour, where to get mods and the available MCP tools.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reset to Default Prompt</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Using the built-in default prompt</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Custom prompt</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Advanced</source>
         <translation type="unfinished"></translation>
     </message>
@@ -5427,7 +5530,7 @@ Please choose one of the following options to proceed.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>If you are still facing issues even after Steam is installed and running, please report this issue to https://github.com/RimSort/RimSort/issues</source>
+        <source>If you are still facing issues even after Steam is installed and running, please report this issue to https://github.com/Daniil2K6/RimSort-AI-Integration/issues</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

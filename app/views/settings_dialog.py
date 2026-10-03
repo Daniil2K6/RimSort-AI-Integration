@@ -1674,6 +1674,14 @@ This basically preserves your mod coloring, user notes etc. for this many second
 
         tab_layout.addStretch()
 
+    def update_ai_prompt_status(self, is_default: bool) -> None:
+        """Show whether the AI prompt editor holds the built-in default text."""
+        self.ai_prompt_status_label.setText(
+            self.tr("Using the built-in default prompt")
+            if is_default
+            else self.tr("Custom prompt")
+        )
+
     def _do_advanced_tab(self) -> None:
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)

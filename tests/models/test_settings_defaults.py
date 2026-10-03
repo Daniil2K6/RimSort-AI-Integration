@@ -122,3 +122,26 @@ class TestRimWorldVersionsDefaults:
         assert settings_with_databases.external_rimworld_versions_file_path.endswith(
             "rimworld_versions.json"
         )
+
+
+class TestAIAssistantDefaults:
+    """Test defaults for the built-in AI assistant chat feature."""
+
+    def test_ai_endpoint_defaults(self, settings: Settings) -> None:
+        """OpenAI endpoint with the gpt-4o-mini model and no key set."""
+        assert settings.ai_base_url == "https://api.openai.com/v1"
+        assert settings.ai_api_key == ""
+        assert settings.ai_model == "gpt-4o-mini"
+
+    def test_ai_prompt_defaults_to_builtin(self, settings: Settings) -> None:
+        """An empty stored prompt means the built-in default prompt."""
+        from app.ai.prompt import DEFAULT_SYSTEM_PROMPT, effective_system_prompt
+
+        assert settings.ai_system_prompt == ""
+        assert effective_system_prompt(settings.ai_system_prompt) == (
+            DEFAULT_SYSTEM_PROMPT
+        )
+
+    def test_ai_chat_dock_visible_by_default(self, settings: Settings) -> None:
+        """The chat dock starts visible."""
+        assert settings.ai_chat_visible is True

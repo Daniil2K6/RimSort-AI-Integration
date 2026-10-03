@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QPushButton,
     QRadioButton,
     QScrollArea,
@@ -99,6 +100,7 @@ class SettingsDialog(QDialog):
         self._do_internal_tools_tab()
         self._do_external_tools_tab()
         self._do_appearance_tab()
+        self._do_ai_tab()
         self._do_advanced_tab()
 
     def _do_locations_tab(self) -> None:
@@ -1597,6 +1599,80 @@ This basically preserves your mod coloring, user notes etc. for this many second
 
         language_controller = LanguageController()
         language_controller.populate_languages_combobox(self.language_combobox)
+
+    def _do_ai_tab(self) -> None:
+        """Built-in AI assistant: endpoint credentials and system prompt."""
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self.tab_widget.addTab(scroll_area, self.tr("AI Assistant"))
+
+        tab = QWidget()
+        scroll_area.setWidget(tab)
+        tab.setAutoFillBackground(False)
+        scroll_area.viewport().setAutoFillBackground(False)
+
+        tab_layout = QVBoxLayout(tab)
+
+        # === API endpoint group ===
+        tab_layout.addWidget(self._make_section_label(self.tr("API Endpoint")))
+        _, api_layout = self._add_group_box(tab_layout)
+
+        api_hint = QLabel(
+            self.tr(
+                "Any OpenAI-compatible endpoint works: OpenAI, OpenRouter, "
+                "LM Studio, Ollama, vLLM, ..."
+            )
+        )
+        api_hint.setWordWrap(True)
+        api_layout.addWidget(api_hint)
+
+        api_grid = QGridLayout()
+        api_layout.addLayout(api_grid)
+
+        base_url_label = QLabel(self.tr("Base URL:"))
+        api_grid.addWidget(base_url_label, 0, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.ai_base_url = self._style_line_edit(QLineEdit())
+        self.ai_base_url.setPlaceholderText("https://api.openai.com/v1")
+        api_grid.addWidget(self.ai_base_url, 0, 1)
+
+        api_key_label = QLabel(self.tr("API key:"))
+        api_grid.addWidget(api_key_label, 1, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.ai_api_key = self._style_line_edit(QLineEdit())
+        self.ai_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        api_grid.addWidget(self.ai_api_key, 1, 1)
+
+        model_label = QLabel(self.tr("Model:"))
+        api_grid.addWidget(model_label, 2, 0, alignment=Qt.AlignmentFlag.AlignRight)
+        self.ai_model = self._style_line_edit(QLineEdit())
+        self.ai_model.setPlaceholderText("gpt-4o-mini")
+        api_grid.addWidget(self.ai_model, 2, 1)
+
+        # === System prompt group ===
+        tab_layout.addWidget(self._make_section_label(self.tr("System Prompt")))
+        _, prompt_layout = self._add_group_box(tab_layout)
+
+        self.ai_prompt_status_label = QLabel()
+        prompt_layout.addWidget(self.ai_prompt_status_label)
+
+        prompt_hint = QLabel(
+            self.tr(
+                "Instructions sent to the model before every conversation. "
+                "The built-in default already covers assistant behaviour, "
+                "where to get mods and the available MCP tools."
+            )
+        )
+        prompt_hint.setWordWrap(True)
+        prompt_layout.addWidget(prompt_hint)
+
+        self.ai_system_prompt_edit = QPlainTextEdit()
+        self.ai_system_prompt_edit.setMinimumHeight(260)
+        prompt_layout.addWidget(self.ai_system_prompt_edit)
+
+        self.ai_reset_prompt_button = QPushButton(self.tr("Reset to Default Prompt"))
+        prompt_layout.addWidget(self.ai_reset_prompt_button)
+
+        tab_layout.addStretch()
 
     def _do_advanced_tab(self) -> None:
         scroll_area = QScrollArea()

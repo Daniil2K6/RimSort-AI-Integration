@@ -163,6 +163,9 @@ class MenuBarController(QObject):
         self.menu_bar.show_translation_status_action.toggled.connect(
             EventBus().do_toggle_translation_status.emit
         )
+        self.menu_bar.ai_assistant_action.triggered.connect(
+            EventBus().do_show_ai_chat.emit
+        )
         self.menu_bar.auto_add_translations_action.triggered.connect(
             EventBus().do_auto_add_translations.emit
         )

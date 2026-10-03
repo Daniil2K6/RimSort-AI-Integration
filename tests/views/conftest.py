@@ -40,6 +40,7 @@ def make_stub_main_window(metadata_controller: MagicMock | None = None) -> MainW
     instance.main_content_panel = MagicMock()
     instance.watchdog_event_handler = None
     instance.metadata_controller = metadata_controller or MagicMock()
+    instance.chat_panel = MagicMock()
     return instance
 
 

@@ -142,6 +142,9 @@ class EventBus(QObject):
     do_toggle_translation_status = Signal(bool)
     do_auto_add_translations = Signal()
 
+    # AI assistant chat signals
+    do_show_ai_chat = Signal()
+
     def __new__(cls) -> "EventBus":  # noqa: PYI034
         """
         Create a new instance or return the existing singleton instance of the `EventBus` class.

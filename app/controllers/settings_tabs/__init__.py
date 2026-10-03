@@ -1,6 +1,7 @@
 from app.controllers.settings_tabs.advanced_tab_controller import (
     AdvancedTabController,
 )
+from app.controllers.settings_tabs.ai_tab_controller import AiTabController
 from app.controllers.settings_tabs.appearance_tab_controller import (
     AppearanceTabController,
 )
@@ -27,6 +28,7 @@ from app.controllers.settings_tabs.sorting_tab_controller import SortingTabContr
 
 __all__ = [
     "AdvancedTabController",
+    "AiTabController",
     "AppearanceTabController",
     "BaseTabController",
     "DatabaseBuilderTabController",

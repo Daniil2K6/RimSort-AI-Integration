@@ -11,6 +11,7 @@ from app.controllers.instance_controller import InstanceController
 from app.controllers.language_controller import LanguageController
 from app.controllers.settings_tabs import (
     AdvancedTabController,
+    AiTabController,
     AppearanceTabController,
     BaseTabController,
     DatabaseBuilderTabController,
@@ -103,6 +104,7 @@ class SettingsController(QObject):
                 on_instance_folder_clear=self._on_instance_folder_location_clear_button_clicked,
             ),
             "appearance": AppearanceTabController(self.settings, self.settings_dialog),
+            "ai": AiTabController(self.settings, self.settings_dialog),
             "game_launch": GameLaunchTabController(self.settings, self.settings_dialog),
             "internal_tools": InternalToolsTabController(
                 self.settings,

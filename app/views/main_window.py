@@ -7,10 +7,11 @@ if TYPE_CHECKING:
     from app.views.settings_dialog import SettingsDialog
 
 from loguru import logger
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QCloseEvent, QShowEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QDockWidget,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -39,6 +40,7 @@ from app.utils.steam.steamcmd.wrapper import SteamcmdInterface
 from app.utils.watchdog import WatchdogHandler
 from app.utils.window_launch_state import apply_window_launch_state
 from app.views.acf_log_reader import AcfLogReader
+from app.views.chat_panel import ChatPanel
 from app.views.dialogue import BinaryChoiceDialog
 from app.views.file_search_dialog import FileSearchDialog
 from app.views.main_content_panel import MainContent
@@ -218,6 +220,20 @@ class MainWindow(QMainWindow):
         widget.setLayout(app_layout)
         self.setCentralWidget(widget)
 
+        # Built-in AI assistant chat (collapsible dock on the right)
+        self.ai_chat_dock = QDockWidget(self.tr("AI Assistant"), self)
+        self.ai_chat_dock.setObjectName("AIAssistantDock")
+        self.chat_panel = ChatPanel(
+            settings=self.settings,
+            show_settings_dialog=self._show_settings_dialog,
+        )
+        self.ai_chat_dock.setWidget(self.chat_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.ai_chat_dock)
+        if not self.settings.ai_chat_visible:
+            self.ai_chat_dock.hide()
+        self.ai_chat_dock.visibilityChanged.connect(self._on_ai_chat_visibility_changed)
+        EventBus().do_show_ai_chat.connect(self._show_ai_chat)
+
         self.mods_panel_controller = ModsPanelController(
             view=self.main_content_panel.mods_panel,
             settings=self.settings,
@@ -285,10 +301,28 @@ class MainWindow(QMainWindow):
         # Stop filesystem watchdog if running
         self.shutdown_watchdog()
 
+        # Stop any in-flight AI chat worker
+        self.chat_panel.shutdown()
+
         # Close all child windows
         self.main_content_panel.close_child_windows()
 
         event.accept()
+
+    @Slot()
+    def _show_ai_chat(self) -> None:
+        """Reveal the AI assistant dock and focus its input box."""
+        self.ai_chat_dock.show()
+        self.ai_chat_dock.raise_()
+        self.chat_panel.focus_input()
+
+    @Slot(bool)
+    def _on_ai_chat_visibility_changed(self, visible: bool) -> None:
+        """Persist dock visibility so it survives a restart."""
+        if self.settings.ai_chat_visible == visible:
+            return
+        self.settings.ai_chat_visible = visible
+        self.settings.save()
 
     def showEvent(self, event: QShowEvent) -> None:
         # Call the original showEvent handler

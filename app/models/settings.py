@@ -56,6 +56,14 @@ class Settings(QObject):
         # RimSort Update check
         self.check_for_update_startup: bool = True
 
+        # Built-in AI assistant (OpenAI-compatible chat)
+        self.ai_base_url: str = "https://api.openai.com/v1"
+        self.ai_api_key: str = ""
+        self.ai_model: str = "gpt-4o-mini"
+        # "" -> use the built-in default prompt (see app.ai.prompt)
+        self.ai_system_prompt: str = ""
+        self.ai_chat_visible: bool = True
+
         # Databases
         self.external_steam_metadata_source: str = "Configured URL"
         self.external_steam_metadata_file_path: str = str(

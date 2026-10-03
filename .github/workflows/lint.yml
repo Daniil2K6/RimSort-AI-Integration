@@ -65,12 +65,12 @@ jobs:
           VALIDATE_JSON: true
           VALIDATE_YAML: true
           VALIDATE_BASH: true
-          # Disabled: checkov runs on Python 3.14 inside the linter image,
-          # but PYTHONPATH above points at this project's 3.12 site-packages
-          # (needed by the internal MyPy). Since the mcp dependency pulled
-          # in pydantic/pydantic_core (native wheels), checkov imports those
-          # 3.12 packages and dies with ModuleNotFoundError on its own venv.
-          VALIDATE_CHECKOV: false
+          # CHECKOV intentionally not listed: checkov runs on Python 3.14
+          # inside the linter image, but PYTHONPATH above points at this
+          # project's 3.12 site-packages (needed by the internal MyPy).
+          # Since the mcp dependency pulled in pydantic/pydantic_core
+          # (native wheels), checkov would import those 3.12 packages and
+          # die with ModuleNotFoundError on its own venv.
           VALIDATE_JSCPD: true
           VALIDATE_VALIDATE_NATURAL_LANGUAGE: true
           # Linter not up to date

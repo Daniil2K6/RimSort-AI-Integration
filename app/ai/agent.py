@@ -37,6 +37,7 @@ WRITE_TOOLS = frozenset(
         "apply_modpack",
         "save_modpack",
         "launch_game",
+        "update_mods",
     }
 )
 
@@ -45,6 +46,7 @@ WRITE_TOOLS = frozenset(
 DRY_RUN_TOOLS: dict[str, bool] = {
     "sort_modlist": True,
     "launch_game": False,
+    "update_mods": False,
 }
 
 #: Hidden from the in-app chat (would desync the GUI-selected instance).
@@ -53,6 +55,9 @@ CHAT_EXCLUDED_TOOLS = frozenset({"set_instance"})
 
 def requires_confirmation(name: str, arguments: dict[str, Any]) -> bool:
     """Return True when running `name` must be confirmed by the user."""
+    if name == "import_modlist":
+        # Read-only parse by default; apply=true rewrites ModsConfig.xml.
+        return bool(arguments.get("apply"))
     if name not in WRITE_TOOLS:
         return False
     if name in DRY_RUN_TOOLS:

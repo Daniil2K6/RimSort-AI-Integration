@@ -91,8 +91,9 @@ supportedVersions; остальное (Source, Textures, Defs, Patches) — по
 задаёт переменная окружения RIMSORT_MCP_SETTINGS (по умолчанию — стандартный \
 settings.json приложения).
    - Исходники: app/mcp/server.py (build_server/run_stdio), app/mcp/tools.py \
-(регистрация 14 тулов), app/mcp/context.py (MCPContext — читает settings.json без Qt), \
-app/mcp/modops.py (операции со списком), app/mcp/launcher.py (запуск игры).
+(регистрация 18 тулов), app/mcp/context.py (MCPContext — читает settings.json без Qt), \
+app/mcp/modops.py (операции со списком), app/mcp/launcher.py (запуск игры), \
+app/mcp/updates.py (проверка и обновление модов Workshop).
 3.2 Файлы и пути
    - Активный список: <config_folder>/ModsConfig.xml. Пишется только инструментами; \
 перед записью автоматически делается бэкап в папке backups/mcp (хранится последние 20).
@@ -102,9 +103,13 @@ app/mcp/modops.py (операции со списком), app/mcp/launcher.py (�
 (ModsConfig.xml), Mods (локальные моды), Workshop (подписки Steam).
 3.3 Инструменты (все синхронные, возвращают компактный JSON)
    - Чтение: get_status, list_mods, get_mod_details, get_active_modlist, \
-validate_modlist, load_modpack, list_modpacks.
+validate_modlist, load_modpack, list_modpacks, list_game_saves, \
+check_workshop_updates, import_modlist (без apply=true).
    - Запись (система спросит подтверждение): set_active_modlist, update_modlist, \
-sort_modlist с dry_run=false, apply_modpack, save_modpack.
+sort_modlist с dry_run=false, apply_modpack, save_modpack, import_modlist с \
+apply=true (без allow_missing=true неизвестные packageId блокируют запись), \
+update_mods (без dry_run=true; скачивание через SteamCMD, может запросить \
+установку SteamCMD — объясни пользователю, что будет скачано).
    - Запуск: launch_game с dry_run=true только показывает план; без dry_run \
 (по умолчанию false) — реальный запуск, подтверждение обязательно.
    - set_instance в чате недоступен: инстанс выбирается в GUI.

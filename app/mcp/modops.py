@@ -22,6 +22,7 @@ from toposort import CircularDependencyError, toposort
 from app.controllers.sort_controller import Sorter
 from app.mcp.context import MCPContext
 from app.models.metadata.metadata_structure import AboutXmlMod, ListedMod, ModsConfig
+from app.services.mod_list_parser import ModListFormatError, parse_mod_list_file
 from app.sort.alphabetical_sort import do_alphabetical_sort
 from app.sort.topo_sort import describe_circular_dependencies, order_topo_levels
 from app.utils.app_info import AppInfo
@@ -381,6 +382,96 @@ def list_modpacks() -> dict[str, Any]:
                 entry["saved_at"] = "unreadable"
             packs.append(entry)
     return {"modpacks": packs, "count": len(packs), "folder": str(folder)}
+
+
+def list_game_saves(ctx: MCPContext) -> dict[str, Any]:
+    """RimWorld save games (.rws) for the current instance, newest first.
+
+    :return: ``{"saves": [...], "count": int, "folder": str, "latest": str|None}``
+    """
+    saves_dir = ctx.config_folder.parent / "Saves"
+    saves: list[dict[str, Any]] = []
+    if saves_dir.is_dir():
+        for target in saves_dir.glob("*.rws"):
+            try:
+                stat = target.stat()
+            except OSError:
+                continue
+            saves.append(
+                {
+                    "name": target.name,
+                    "path": str(target),
+                    "size": stat.st_size,
+                    "modified": datetime.fromtimestamp(stat.st_mtime, UTC).isoformat(
+                        timespec="seconds"
+                    ),
+                    "_mtime": stat.st_mtime,
+                }
+            )
+    saves.sort(key=lambda entry: entry.pop("_mtime"), reverse=True)
+    return {
+        "saves": saves,
+        "count": len(saves),
+        "folder": str(saves_dir),
+        "latest": saves[0]["name"] if saves else None,
+    }
+
+
+def import_modlist(
+    ctx: MCPContext,
+    path: str = "",
+    apply: bool = False,
+    allow_missing: bool = False,
+    backup: bool = True,
+) -> dict[str, Any]:
+    """Parse a mod list file (RimWorld save, ModsConfig XML, .rml, JSON).
+
+    :param path: file to read; ``""``/``"latest"`` picks the newest .rws
+        save from :func:`list_game_saves`.
+    :param apply: write the parsed order into ModsConfig.xml when true.
+    :return: dict with ``package_ids`` (load order) and ``unknown`` ids.
+    """
+    selection = path.strip()
+    if selection.lower() in ("", "latest"):
+        saves = list_game_saves(ctx)["saves"]
+        if not saves:
+            raise ToolError(
+                f"No .rws saves found in {ctx.config_folder.parent / 'Saves'}. "
+                "Pass an explicit path instead."
+            )
+        target = Path(saves[0]["path"])
+    else:
+        target = Path(selection).expanduser()
+
+    try:
+        parsed = parse_mod_list_file(target)
+    except ModListFormatError as exc:
+        raise ToolError(f"Could not parse mod list {target}: {exc}") from exc
+    if not parsed.package_ids:
+        raise ToolError(f"No mod ids found in {target}")
+
+    unknown = sorted({pid for pid in parsed.package_ids if not ctx.paths_for_pid(pid)})
+    result: dict[str, Any] = {
+        "path": str(target),
+        "source_format": parsed.source_format,
+        "game_version": parsed.game_version,
+        "count": len(parsed.package_ids),
+        "package_ids": parsed.package_ids,
+        "unknown_count": len(unknown),
+        "unknown": unknown[:_REPORT_CAP],
+        "applied": False,
+    }
+    if apply:
+        write = set_active_list(
+            ctx,
+            parsed.package_ids,
+            allow_missing=allow_missing,
+            backup=backup,
+        )
+        result["applied"] = True
+        result["written"] = write["written"]
+        result["backup"] = write["backup"]
+    return result
 
 
 def installed_mod_summary(ctx: MCPContext) -> dict[str, Any]:

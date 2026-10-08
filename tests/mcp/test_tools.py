@@ -15,10 +15,13 @@ from tests.mcp.conftest import MCPEnv
 
 EXPECTED_TOOLS = {
     "apply_modpack",
+    "check_workshop_updates",
     "get_active_modlist",
     "get_mod_details",
     "get_status",
+    "import_modlist",
     "launch_game",
+    "list_game_saves",
     "list_modpacks",
     "list_mods",
     "load_modpack",
@@ -27,6 +30,7 @@ EXPECTED_TOOLS = {
     "set_instance",
     "sort_modlist",
     "update_modlist",
+    "update_mods",
     "validate_modlist",
 }
 

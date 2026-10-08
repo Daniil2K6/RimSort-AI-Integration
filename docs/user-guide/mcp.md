@@ -22,7 +22,7 @@ RimSort ships a local **MCP (Model Context Protocol) server** over stdio. It let
 
 The server is built on the official Python [MCP SDK](https://pypi.org/project/mcp/) and runs entirely on your machine. It exposes:
 
-- **14 tools** — for reading status, managing the active mod list, sorting, modpacks, and launching the game
+- **18 tools** — for reading status, managing the active mod list, sorting, modpacks, importing save-game mod lists, checking and downloading Workshop updates, and launching the game
 - **2 resources** — `rimsort://status` and `rimsort://modlist/active` for lazy reads
 - **2 prompts** — guided workflows for assembling and troubleshooting mod lists
 
@@ -129,6 +129,20 @@ Modpacks are JSON snapshots stored in RimSort's saved-modlists folder. Names mus
 | `load_modpack` | `name` | Read a saved modpack (does not change the active list). |
 | `apply_modpack` | `name`, `allow_missing`, `backup` | Load a modpack into the active list. |
 | `list_modpacks` | — | List saved modpacks with packageId counts. |
+
+### Save-game mod lists
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `list_game_saves` | — | RimWorld saves (`.rws`) for this instance, newest first. |
+| `import_modlist` | `path`, `apply`, `allow_missing`, `backup` | Parse a mod list from a RimWorld save (`.rws`), ModsConfig XML, `.rml`, or RimSort JSON. `path: ""`/`"latest"` picks the newest save. Returns packageIds in load order plus unknown ids. `apply: true` writes `ModsConfig.xml` (with backup). |
+
+### Workshop updates
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `check_workshop_updates` | `sources` | Compare installed Workshop/SteamCMD mods with the Steam WebAPI; returns mods older than the workshop's `time_updated`. `sources` filters by `"Steam CMD"`/`"Steam Workshop"`/all (default). |
+| `update_mods` | `package_ids`, `publishedfileids`, `outdated_only`, `sources`, `validate`, `install_steamcmd`, `login`, `dry_run`, `batch_timeout` | Download/update mods headlessly via SteamCMD in batches of 25. Targets given packageIds/publishedfileids, or only outdated mods (`outdated_only: true`). `install_steamcmd: true` downloads SteamCMD into the instance prefix when missing. `login` is `"anonymous"` (default) or a Steam account name — run `rimsort steam-login` once first and export `RIMSORT_STEAM_PASSWORD` (`RIMSORT_STEAM_GUARD_CODE` if needed); credentials are never stored by RimSort. `dry_run: true` resolves targets without downloading. For scheduled auto-updates prefer the `rimsort update-mods` CLI command (cron/launchd). |
 
 ### Launching
 

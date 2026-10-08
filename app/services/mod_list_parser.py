@@ -92,10 +92,20 @@ def _parse_xml_mod_list(path: Path, data: dict[str, Any]) -> ParsedModList:
         mods_config = {}
 
     raw_active = mods_config.get("activeMods")
-    if not raw_active:
-        package_ids: list[str] = []
-    else:
+    if raw_active:
         package_ids = validate_rimworld_mods_list(data)
+    else:
+        # RimWorld saves (.rws) and RML lists keep the ids under
+        # savegame/savedModList instead of ModsConfigData. Extract them
+        # directly (no dialogs) so headless callers stay dialog-free.
+        package_ids = []
+        for key in ("savegame", "savedModList"):
+            container = data.get(key)
+            meta = container.get("meta") if isinstance(container, dict) else None
+            mod_ids = meta.get("modIds") if isinstance(meta, dict) else None
+            if isinstance(mod_ids, dict) and mod_ids:
+                package_ids = _normalize_package_ids(mod_ids)
+                break
 
     version: str | None = None
     raw_version = mods_config.get("version")
@@ -103,6 +113,16 @@ def _parse_xml_mod_list(path: Path, data: dict[str, Any]) -> ParsedModList:
         version = raw_version
     elif isinstance(raw_version, dict):
         version = str(value_extractor(raw_version))
+    if version is None:
+        for key in ("savegame", "savedModList"):
+            container = data.get(key)
+            meta = container.get("meta") if isinstance(container, dict) else None
+            raw_meta_version = (
+                meta.get("gameVersion") if isinstance(meta, dict) else None
+            )
+            if isinstance(raw_meta_version, str) and raw_meta_version:
+                version = raw_meta_version
+                break
     known_expansions = _normalize_package_ids(mods_config.get("knownExpansions"))
     return ParsedModList(
         package_ids=package_ids,

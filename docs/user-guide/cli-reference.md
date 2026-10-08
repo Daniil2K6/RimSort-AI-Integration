@@ -31,6 +31,8 @@ Currently available commands:
 
 - `build-db` - Build Steam Workshop metadata databases
 - `mcp` - Run the local MCP (Model Context Protocol) server for AI agents
+- `steam-login` - Log SteamCMD in with your Steam account (interactive)
+- `update-mods` - Headless Workshop/SteamCMD mod updates via SteamCMD
 
 Additional commands may be added in future versions to support more RimSort functionality.
 
@@ -146,6 +148,61 @@ uv run python -m app mcp --log-level DEBUG
 
 {: .note }
 For the full tool reference, client configuration examples, and limitations, see the [MCP Integration guide](mcp).
+
+### `steam-login`
+
+Log SteamCMD in with your Steam account so headless downloads can run without an interactive prompt. You type your password and Steam Guard code directly into the SteamCMD prompt — RimSort never sees or stores them.
+
+{: .note }
+Anonymous login is enough for RimWorld Workshop mods. A real account is only needed for private workshop items, depot downloads, or when SteamCMD refuses anonymous for some other reason.
+
+#### Basic Usage
+
+```bash
+uv run python -m app steam-login my_account
+```
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--no-install` | Flag | off | Fail instead of downloading SteamCMD when it is missing. |
+
+For unattended runs afterwards, SteamCMD may still prompt for a password; supply it via the `RIMSORT_STEAM_PASSWORD` environment variable (plus `RIMSORT_STEAM_GUARD_CODE` for a first Steam Guard login). Credentials are never written to `settings.json` or logs.
+
+### `update-mods`
+
+Check the Steam WebAPI for outdated Workshop/SteamCMD mods and refresh them through SteamCMD. Designed for scheduled auto-updates (cron/launchd) and servers without a GUI.
+
+#### Basic Usage
+
+```bash
+# See what would be updated
+uv run python -m app update-mods --dry-run
+
+# Update everything that is outdated (installs SteamCMD if missing)
+uv run python -m app update-mods --install-steamcmd
+
+# Logged-in account, explicit targets
+uv run python -m app update-mods --login my_account --pfid 1234567890
+```
+
+#### Options Reference
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--login TEXT` | String | `anonymous` | Steam account for SteamCMD (run `steam-login` first). |
+| `--outdated-only` / `--all` | Flag | `--outdated-only` | Only mods newer on the workshop, or every resolved target. |
+| `--pfid ID` | Multi | — | Explicit publishedfileid (repeatable). |
+| `--package-id ID` | Multi | — | Installed packageId (repeatable). |
+| `--sources TEXT` | String | `Steam CMD` | Outdated-check filter: `Steam CMD`, `Steam Workshop`, or `all`. |
+| `--install-steamcmd` | Flag | off | Download SteamCMD into the instance prefix when missing. |
+| `--validate` / `--no-validate` | Flag | setting | Force/disable SteamCMD `validate` on downloads. |
+| `--dry-run` | Flag | off | Resolve targets without downloading anything. |
+
+Prints a JSON report and exits non-zero when some mods failed. Example daily schedule:
+
+```bash
+0 6 * * * cd /path/to/RimSort && uv run python -m app update-mods >> /tmp/rimsort-update.log 2>&1
+```
 
 ### Troubleshooting
 

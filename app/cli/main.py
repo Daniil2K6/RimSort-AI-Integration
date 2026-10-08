@@ -8,6 +8,7 @@ import click
 
 from app.cli.build_db import build_db
 from app.cli.mcp import mcp
+from app.cli.steam import steam_login, update_mods
 from app.utils.app_info import AppInfo
 
 
@@ -26,6 +27,8 @@ def cli() -> None:
 # Register subcommands
 cli.add_command(build_db)
 cli.add_command(mcp)
+cli.add_command(steam_login)
+cli.add_command(update_mods)
 
 
 if __name__ == "__main__":

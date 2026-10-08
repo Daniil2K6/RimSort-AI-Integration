@@ -12,7 +12,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from app.mcp import launcher, modops
+from app.mcp import launcher, modops, updates
 from app.mcp.context import MCPContext
 from app.models.metadata.metadata_structure import AboutXmlMod
 from app.utils.app_info import AppInfo
@@ -319,6 +319,88 @@ def register_tools(mcp: MCPServer, ctx: MCPContext) -> None:
     def list_modpacks() -> dict[str, Any]:
         """List saved modpacks with mod counts and timestamps."""
         return modops.list_modpacks()
+
+    @mcp.tool()
+    def list_game_saves() -> dict[str, Any]:
+        """RimWorld save games (.rws) for this instance, newest first.
+
+        Use a returned path with import_modlist to load the mod list a
+        save was created with.
+        """
+        return modops.list_game_saves(ctx)
+
+    @mcp.tool()
+    def import_modlist(
+        path: str = "",
+        apply: bool = False,
+        allow_missing: bool = False,
+        backup: bool = True,
+    ) -> dict[str, Any]:
+        """Import a mod list from a RimWorld save (.rws), ModsConfig XML,
+        .rml list or RimSort JSON.
+
+        path: file to read; "" or "latest" picks the newest .rws save
+        (see list_game_saves). Returns package_ids in load order plus
+        unknown ids. apply=true writes ModsConfig.xml (with backup);
+        unknown ids reject the write unless allow_missing=true.
+        """
+        return modops.import_modlist(
+            ctx, path, apply=apply, allow_missing=allow_missing, backup=backup
+        )
+
+    @mcp.tool()
+    def check_workshop_updates(sources: str = "") -> dict[str, Any]:
+        """Compare installed Workshop/SteamCMD mods with the Steam WebAPI.
+
+        sources: comma-separated filter — "Steam CMD", "Steam Workshop"
+        or ""/all (default). Returns outdated mods whose installed copy
+        is older than the workshop time_updated, plus API failures.
+        Uses ACF timestamps when present, otherwise local file mtimes.
+        """
+        return updates.check_workshop_updates(ctx, sources=sources)
+
+    # Signature mirrors app.mcp.updates.update_mods for the tool schema.
+    # jscpd:ignore-start
+    @mcp.tool()
+    def update_mods(
+        package_ids: list[str] | None = None,
+        publishedfileids: list[str] | None = None,
+        outdated_only: bool = False,
+        sources: str = "Steam CMD",
+        validate: bool | None = None,
+        install_steamcmd: bool = False,
+        login: str = "anonymous",
+        dry_run: bool = False,
+        batch_timeout: int = 1800,
+    ) -> dict[str, Any]:
+        """Download/update mods via SteamCMD (blocking, headless).
+
+        Targets: package_ids (installed mods with a PublishedFileId),
+        explicit publishedfileids, or outdated_only=true (runs the
+        update check first). sources filters outdated_only — default
+        "Steam CMD"; Steam Workshop copies refresh through the Steam
+        client. install_steamcmd=true downloads SteamCMD into the
+        instance prefix when missing. login: "anonymous" (default) or a
+        Steam account name — for a real account run `rimsort steam-login`
+        once first and export RIMSORT_STEAM_PASSWORD (and
+        RIMSORT_STEAM_GUARD_CODE if needed); credentials are never
+        stored. dry_run=true only resolves targets. batch_timeout:
+        seconds allowed per SteamCMD batch.
+        """
+        return updates.update_mods(
+            ctx,
+            package_ids=package_ids,
+            publishedfileids=publishedfileids,
+            outdated_only=outdated_only,
+            sources=sources,
+            validate=validate,
+            install_steamcmd=install_steamcmd,
+            login=login,
+            dry_run=dry_run,
+            batch_timeout=batch_timeout,
+        )
+
+    # jscpd:ignore-end
 
     @mcp.tool()
     def launch_game(dry_run: bool = False) -> dict[str, Any]:

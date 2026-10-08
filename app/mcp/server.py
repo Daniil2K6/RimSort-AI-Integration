@@ -20,8 +20,11 @@ INSTRUCTIONS = (
     "and their load-order rules; build lists with set_active_modlist or "
     "update_modlist; order them with sort_modlist (dry_run=true first); "
     "always finish with validate_modlist (ok=true) and persist via "
-    "save_modpack. Every write backs up ModsConfig.xml; launch_game "
-    "supports dry_run=true to preview the launch."
+    "save_modpack. import_modlist loads a mod list from a RimWorld save "
+    "(list_game_saves finds them). check_workshop_updates finds outdated "
+    "Workshop mods and update_mods refreshes them via SteamCMD. Every "
+    "write backs up ModsConfig.xml; launch_game supports dry_run=true to "
+    "preview the launch."
 )
 
 

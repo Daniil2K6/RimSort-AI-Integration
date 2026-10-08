@@ -30,6 +30,9 @@ READ_TOOLS = (
     "validate_modlist",
     "load_modpack",
     "list_modpacks",
+    "list_game_saves",
+    "check_workshop_updates",
+    "import_modlist",
 )
 
 WRITE_TOOLS = (
@@ -37,6 +40,7 @@ WRITE_TOOLS = (
     "update_modlist",
     "apply_modpack",
     "save_modpack",
+    "update_mods",
 )
 
 
@@ -107,6 +111,14 @@ def test_requires_confirmation_dry_run_semantics() -> None:
     assert requires_confirmation("launch_game", {})
     assert requires_confirmation("launch_game", {"dry_run": False})
     assert not requires_confirmation("launch_game", {"dry_run": True})
+    # update_mods defaults to a real download -> confirmation needed.
+    assert requires_confirmation("update_mods", {})
+    assert requires_confirmation("update_mods", {"dry_run": False})
+    assert not requires_confirmation("update_mods", {"dry_run": True})
+    # import_modlist is read-only unless apply=true.
+    assert not requires_confirmation("import_modlist", {})
+    assert not requires_confirmation("import_modlist", {"apply": False})
+    assert requires_confirmation("import_modlist", {"apply": True})
 
 
 def test_build_agent_tools_matches_surface_without_set_instance(

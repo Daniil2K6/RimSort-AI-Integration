@@ -333,7 +333,14 @@ class MainWindow(QMainWindow):
 
     @Slot(bool)
     def _on_ai_chat_visibility_changed(self, visible: bool) -> None:
-        """Persist dock visibility so it survives a restart."""
+        """Persist dock visibility so it survives a restart.
+
+        Hiding or minimizing the whole window also flips the dock's
+        visibility flag, but that is not a user toggle — ignore it,
+        otherwise the chat would stay closed on the next launch.
+        """
+        if not self.isVisible() or self.isMinimized():
+            return
         if self.settings.ai_chat_visible == visible:
             return
         self.settings.ai_chat_visible = visible

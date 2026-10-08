@@ -67,6 +67,9 @@ class SortingTabController(BaseTabController):
         self.dialog.show_duplicate_mods_warning_checkbox.setChecked(
             self.settings.duplicate_mods_warning
         )
+        self.dialog.show_missing_properties_warning_checkbox.setChecked(
+            self.settings.missing_properties_warning
+        )
         self.dialog.mod_list_updated_indicator_checkbox.setChecked(
             self.settings.mod_list_updated_indicator
         )
@@ -116,6 +119,9 @@ class SortingTabController(BaseTabController):
         )
         self.settings.duplicate_mods_warning = (
             self.dialog.show_duplicate_mods_warning_checkbox.isChecked()
+        )
+        self.settings.missing_properties_warning = (
+            self.dialog.show_missing_properties_warning_checkbox.isChecked()
         )
         self.settings.mod_list_updated_indicator = (
             self.dialog.mod_list_updated_indicator_checkbox.isChecked()

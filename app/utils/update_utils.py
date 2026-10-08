@@ -85,9 +85,6 @@ UNKNOWN_VERSION_TEXT = "Could not find version Information of RimSort, This may 
 UNKNOWN_VERSION_INFO = "Are you sure you want to still update anyway?"
 
 # Standardized error messages
-ERR_UPDATE_SKIPPED_TITLE = "Update skipped"
-ERR_UPDATE_SKIPPED_TEXT = "You are running from Python interpreter."
-ERR_UPDATE_SKIPPED_INFO = "Skipping update check..."
 ERR_UPDATE_ERROR_TITLE = "RimSort Update Error"
 ERR_NO_VALID_RELEASE_TITLE = "RimSort Update Error"
 ERR_NO_VALID_RELEASE_TEXT = "Failed to find valid RimSort release for {system_info}"
@@ -650,13 +647,10 @@ class UpdateManager(QObject):
 
         # Check if running from compiled binary built by Nuitka or running from Python interpreter
         if "__compiled__" not in globals():
-            logger.debug(
+            # Log-only: a modal here would pop up on every development launch.
+            # Compiled builds never reach this branch, so release behavior is unchanged.
+            logger.info(
                 "You are running from Python interpreter. Skipping update check..."
-            )
-            dialogue.show_warning(
-                title=ERR_UPDATE_SKIPPED_TITLE,
-                text=ERR_UPDATE_SKIPPED_TEXT,
-                information=ERR_UPDATE_SKIPPED_INFO,
             )
             return False
 

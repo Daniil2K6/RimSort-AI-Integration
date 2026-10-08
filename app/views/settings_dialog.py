@@ -902,6 +902,19 @@ This basically preserves your mod coloring, user notes etc. for this many second
             self.show_duplicate_mods_warning_checkbox
         )
 
+        # Missing mod properties notification checkbox
+        self.show_missing_properties_warning_checkbox = QCheckBox(
+            self.tr("Show missing mod properties warning")
+        )
+        self.show_missing_properties_warning_checkbox.setToolTip(
+            self.tr(
+                "Notifies and displays mods missing a Package ID or Publish Field ID"
+            )
+        )
+        modlist_option_group_box_layout.addWidget(
+            self.show_missing_properties_warning_checkbox
+        )
+
         # Recently updated mods indicator checkbox
         self.mod_list_updated_indicator_checkbox = QCheckBox(
             self.tr("Show recently updated mods indicator")

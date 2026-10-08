@@ -144,6 +144,8 @@ class Settings(QObject):
         self.try_download_missing_mods: bool = True
         # Whether to notify user about duplicate mods
         self.duplicate_mods_warning: bool = True
+        # Whether to notify user about mods missing Package ID / Publish Field ID
+        self.missing_properties_warning: bool = True
         # Whether to show the "recently updated" indicator on Steam Workshop mods
         self.mod_list_updated_indicator: bool = False
         # Number of days within which a workshop mod counts as "recently updated"

@@ -37,12 +37,16 @@ class TestSortingTabUpdateView:
         controller, settings, dialog = sorting_tab
         settings.try_download_missing_mods = True
         settings.duplicate_mods_warning = False
+        settings.missing_properties_warning = False
         settings.save_inactive_mods_sort_state = False
 
         controller.update_view_from_model()
 
         dialog.download_missing_mods_checkbox.setChecked.assert_called_with(True)
         dialog.show_duplicate_mods_warning_checkbox.setChecked.assert_called_with(False)
+        dialog.show_missing_properties_warning_checkbox.setChecked.assert_called_with(
+            False
+        )
         dialog.save_inactive_mods_sort_state_checkbox.setChecked.assert_called_with(
             False
         )
@@ -117,6 +121,7 @@ class TestSortingTabUpdateModel:
         dialog.prefer_versioned_about_tags_checkbox.isChecked.return_value = True
         dialog.download_missing_mods_checkbox.isChecked.return_value = False
         dialog.show_duplicate_mods_warning_checkbox.isChecked.return_value = True
+        dialog.show_missing_properties_warning_checkbox.isChecked.return_value = False
         dialog.hide_invalid_mods_when_filtering_checkbox.isChecked.return_value = True
         dialog.save_inactive_mods_sort_state_checkbox.isChecked.return_value = True
 
@@ -128,6 +133,7 @@ class TestSortingTabUpdateModel:
         assert settings.prefer_versioned_about_tags is True
         assert settings.try_download_missing_mods is False
         assert settings.duplicate_mods_warning is True
+        assert settings.missing_properties_warning is False
         assert settings.hide_invalid_mods_when_filtering is True
         assert settings.save_inactive_mods_sort_state is True
 

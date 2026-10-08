@@ -678,6 +678,12 @@ class MainContent(QObject):
         the main application flow.
         """
         try:
+            if not self.settings.missing_properties_warning:
+                logger.warning(
+                    "User preference is not configured to display mods with missing properties. Skipping..."
+                )
+                return
+
             # Identify mods with missing critical properties
             missing_packageid_paths = self.window_manager.get_missing_packageid_paths()
             missing_publishfieldid_paths = (

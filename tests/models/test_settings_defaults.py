@@ -98,6 +98,17 @@ class TestModlistHistoryDefaults:
     def test_modlist_history_defaults(self, settings: Settings) -> None:
         """History is on by default and keeps 100 snapshots."""
         assert settings.modlist_history_enabled is True
+
+
+class TestStartupWarningDefaults:
+    """Test defaults for the startup warning panels."""
+
+    def test_duplicate_and_missing_properties_warnings_default_on(
+        self, settings: Settings
+    ) -> None:
+        """Both warning panels are enabled by default."""
+        assert settings.duplicate_mods_warning is True
+        assert settings.missing_properties_warning is True
         assert settings.modlist_history_retention_count == 100
 
 

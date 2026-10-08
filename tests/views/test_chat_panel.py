@@ -10,7 +10,7 @@ from PySide6.QtCore import QCoreApplication, Qt
 from PySide6.QtWidgets import QApplication
 
 from app.ai.chat_store import ChatMessage, ChatSession
-from app.ai.providers import get_provider, new_provider
+from app.ai.providers import new_provider
 from app.models.settings import Settings
 from app.views.chat_panel import (
     ChatPanel,
@@ -199,25 +199,38 @@ class TestChatPanelProviders:
         chat_panel._add_provider()
         assert chat_panel.settings.ai_providers == before
 
-    def test_session_provider_is_restored_on_switch(
-        self, chat_panel: ChatPanel
-    ) -> None:
+    def test_switch_chat_keeps_model_selection(self, chat_panel: ChatPanel) -> None:
+        """Opening a saved chat must not overwrite the chosen model."""
         first = new_provider("First", "https://a.example/v1", models=["ma"])
         second = new_provider("Second", "https://b.example/v1", models=["mb"])
         chat_panel.settings.ai_providers = [first, second]
+        chat_panel._select_model(second["id"], "mb")
 
+        # A chat saved earlier while a different model was active.
         session = chat_panel._store.new_session()
-        session.title = "With second"
+        session.title = "Old model"
         session.messages.append(ChatMessage(role="user", content="hi"))
-        session.provider_id = second["id"]
-        session.model = "mb"
+        session.provider_id = first["id"]
+        session.model = "ma"
         chat_panel._store.save(session)
 
         chat_panel._switch_chat(session.id)
 
         assert chat_panel.settings.ai_provider_id == second["id"]
         assert chat_panel.settings.ai_model == "mb"
-        assert get_provider(chat_panel.settings) is not None
+
+    def test_model_selection_persists_across_new_chat(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        """New Chat keeps the active provider/model selection."""
+        provider = new_provider("Local", "http://localhost:11434/v1", models=["llama3"])
+        chat_panel.settings.ai_providers = [provider]
+        chat_panel._select_model(provider["id"], "llama3")
+
+        chat_panel._new_chat()
+
+        assert chat_panel.settings.ai_provider_id == provider["id"]
+        assert chat_panel.settings.ai_model == "llama3"
 
 
 class TestChatPanelColors:
@@ -281,13 +294,13 @@ class TestChatPanelColors:
 
 class TestChatPanelSessionData:
     def test_session_roundtrip_through_store(self, chat_panel: ChatPanel) -> None:
-        """Provider/model are stamped onto the session when saving."""
+        """Messages roundtrip; provider/model stay global and are not stamped."""
         session: ChatSession = chat_panel._session
         session.messages.append(ChatMessage(role="user", content="hi"))
         chat_panel._save_session()
 
         loaded = chat_panel._store.load(session.id)
         assert loaded is not None
-        assert loaded.provider_id == chat_panel.settings.ai_provider_id
-        assert loaded.model == chat_panel.settings.ai_model
+        assert loaded.provider_id == ""
+        assert loaded.model == ""
         assert loaded.messages[0].content == "hi"

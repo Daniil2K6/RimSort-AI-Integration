@@ -345,8 +345,6 @@ class ChatPanel(QWidget):
         session = self._session
         if session.is_empty:
             return
-        session.provider_id = self.settings.ai_provider_id
-        session.model = self.settings.ai_model
         try:
             self._store.save(session)
         except OSError:
@@ -399,7 +397,6 @@ class ChatPanel(QWidget):
             return
         self._session = session
         self._render_session()
-        self._apply_session_provider()
         self._update_title()
         self._refresh_sidebar()
 
@@ -410,18 +407,6 @@ class ChatPanel(QWidget):
                 self._append_user(message.content)
             elif message.role == "assistant":
                 self._append_assistant(message.content)
-
-    def _apply_session_provider(self) -> None:
-        """Restore the provider/model a saved chat was using."""
-        if not self._session.provider_id:
-            return
-        if get_provider(self.settings, self._session.provider_id) is None:
-            return
-        set_active(
-            self.settings,
-            self._session.provider_id,
-            self._session.model or self.settings.ai_model,
-        )
 
     @Slot(QPoint)
     def _show_history_menu(self, pos: QPoint) -> None:

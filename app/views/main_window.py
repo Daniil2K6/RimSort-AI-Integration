@@ -142,6 +142,9 @@ class MainWindow(QMainWindow):
         self.sort_button = QPushButton(self.tr("Sort"))
         self.save_button = QPushButton(self.tr("Save"))
         self.run_button = QPushButton(self.tr("Run"))
+        self.ai_chat_button = QPushButton(self.tr("AI Chat"))
+        self.ai_chat_button.setCheckable(True)
+        self.ai_chat_button.setToolTip(self.tr("Toggle the AI assistant chat"))
 
         buttons = [
             self.refresh_button,
@@ -150,6 +153,7 @@ class MainWindow(QMainWindow):
             self.sort_button,
             self.save_button,
             self.run_button,
+            self.ai_chat_button,
         ]
 
         for button in buttons:
@@ -232,6 +236,9 @@ class MainWindow(QMainWindow):
         if not self.settings.ai_chat_visible:
             self.ai_chat_dock.hide()
         self.ai_chat_dock.visibilityChanged.connect(self._on_ai_chat_visibility_changed)
+        self.ai_chat_button.setChecked(not self.ai_chat_dock.isHidden())
+        self.ai_chat_button.clicked.connect(self._on_ai_chat_button_clicked)
+        self.ai_chat_dock.visibilityChanged.connect(self.ai_chat_button.setChecked)
         EventBus().do_show_ai_chat.connect(self._show_ai_chat)
 
         self.mods_panel_controller = ModsPanelController(
@@ -315,6 +322,14 @@ class MainWindow(QMainWindow):
         self.ai_chat_dock.show()
         self.ai_chat_dock.raise_()
         self.chat_panel.focus_input()
+
+    @Slot(bool)
+    def _on_ai_chat_button_clicked(self, checked: bool) -> None:
+        """Toggle the AI chat dock from the main-window button row."""
+        if checked:
+            self._show_ai_chat()
+        else:
+            self.ai_chat_dock.hide()
 
     @Slot(bool)
     def _on_ai_chat_visibility_changed(self, visible: bool) -> None:

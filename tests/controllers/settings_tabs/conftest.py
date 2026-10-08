@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from app.controllers.settings_tabs.ai_tab_controller import AiTabController
 from app.controllers.settings_tabs.sorting_tab_controller import SortingTabController
 from app.models.settings import Settings
 
@@ -30,4 +31,15 @@ def sorting_tab(
     settings = Settings()
     dialog = MagicMock()
     controller = SortingTabController(settings, dialog)
+    return controller, settings, dialog
+
+
+@pytest.fixture()
+def ai_tab(
+    _mock_settings_deps: None,
+) -> tuple[AiTabController, Settings, MagicMock]:
+    """Create an AiTabController with a fresh Settings model and mock dialog."""
+    settings = Settings()
+    dialog = MagicMock()
+    controller = AiTabController(settings, dialog)
     return controller, settings, dialog

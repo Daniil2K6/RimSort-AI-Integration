@@ -1269,3 +1269,47 @@ QLabel#FilterBadge {
     font-size: 10px;
     font-weight: bold;
 }
+
+/* ===== AI chat panel (views/chat_panel.py) ===== */
+QFrame#ChatHeader {
+    background-color: #121c24;
+    border: 1px solid #3b4a64;
+    border-radius: 4px;
+}
+QLabel#ChatTitle {
+    color: #d6e0f3;
+    font-weight: bold;
+}
+QTextBrowser#ChatHistory {
+    background-color: #101820;
+    color: #d6e0f3;
+    border: 1px solid #3b4a64;
+    border-radius: 4px;
+}
+QPlainTextEdit#ChatInput {
+    background-color: #121c24;
+    color: #d6e0f3;
+    border: 1px solid #3b4a64;
+    border-radius: 4px;
+}
+QListWidget#ChatHistoryList {
+    background-color: #121c24;
+    color: #d6e0f3;
+    border: 1px solid #3b4a64;
+    border-radius: 4px;
+}
+QListWidget#ChatHistoryList::item {
+    padding: 3px;
+}
+QListWidget#ChatHistoryList::item:hover {
+    background-color: #1a2a34;
+}
+QListWidget#ChatHistoryList::item:selected {
+    background-color: #2b4a6f;
+    color: #ffffff;
+}
+QFrame#ChatHeader QPushButton {
+    min-width: 0px;
+    min-height: 0px;
+    padding: 2px 6px;
+}

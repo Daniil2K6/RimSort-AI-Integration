@@ -142,6 +142,11 @@ class TestAIAssistantDefaults:
             DEFAULT_SYSTEM_PROMPT
         )
 
+    def test_ai_provider_list_defaults_empty(self, settings: Settings) -> None:
+        """No providers configured yet; legacy fields seed them later."""
+        assert settings.ai_providers == []
+        assert settings.ai_provider_id == ""
+
     def test_ai_chat_dock_visible_by_default(self, settings: Settings) -> None:
         """The chat dock starts visible."""
         assert settings.ai_chat_visible is True

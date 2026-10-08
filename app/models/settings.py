@@ -60,6 +60,10 @@ class Settings(QObject):
         self.ai_base_url: str = "https://api.openai.com/v1"
         self.ai_api_key: str = ""
         self.ai_model: str = "gpt-4o-mini"
+        # Configured providers (see app.ai.providers); the legacy
+        # ai_base_url/ai_api_key fields above mirror the active provider.
+        self.ai_providers: list[dict[str, Any]] = []
+        self.ai_provider_id: str = ""
         # "" -> use the built-in default prompt (see app.ai.prompt)
         self.ai_system_prompt: str = ""
         self.ai_chat_visible: bool = True

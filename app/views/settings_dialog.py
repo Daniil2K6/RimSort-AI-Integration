@@ -1648,6 +1648,11 @@ This basically preserves your mod coloring, user notes etc. for this many second
         self.ai_model.setPlaceholderText("gpt-4o-mini")
         api_grid.addWidget(self.ai_model, 2, 1)
 
+        self.ai_add_provider_button = QPushButton(self.tr("Add Provider..."))
+        api_grid.addWidget(
+            self.ai_add_provider_button, 3, 1, alignment=Qt.AlignmentFlag.AlignLeft
+        )
+
         # === System prompt group ===
         tab_layout.addWidget(self._make_section_label(self.tr("System Prompt")))
         _, prompt_layout = self._add_group_box(tab_layout)

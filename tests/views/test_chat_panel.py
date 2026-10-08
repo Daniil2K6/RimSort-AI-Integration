@@ -254,8 +254,9 @@ class TestChatPanelColors:
         assert background == "#ffffff"
         assert foreground == "#000000"
         assert accent == "#346792"
-        # Light background -> dark accent and dark error red.
-        assert chat_panel._assistant_color() == "#346792"
+        # Light fallback background -> assistant uses the readable text color.
+        assert chat_panel._assistant_color() == "#000000"
+        # Light background -> dark error red.
         assert chat_panel._error_color() == "#c01c28"
         assert chat_panel.history_view.objectName() == "ChatHistory"
         assert chat_panel.input.objectName() == "ChatInput"
@@ -275,11 +276,31 @@ class TestChatPanelColors:
             assert background == "#19232d"
             assert accent == "#346792"
             assistant = chat_panel._assistant_color()
-            # Accent lightened toward white for dark backgrounds.
-            assert assistant != accent
+            # Assistant replies are pure white on dark backgrounds.
+            assert assistant == "#ffffff"
             assert _luminance(assistant) > _luminance(accent)
             assert chat_panel._error_color() == "#ff7b72"
             assert chat_panel._activity_color() != foreground
+        finally:
+            app.setStyleSheet("")
+
+    def test_assistant_renders_markdown_in_white(self, chat_panel: ChatPanel) -> None:
+        """Markdown from the model renders (bold/headings/lists) in white."""
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        app.setStyleSheet(
+            "QTextBrowser#ChatHistory { background-color: #19232d; color: #e6edf3; }"
+        )
+        try:
+            chat_panel._append_assistant(
+                "**жирный** и `код`\n\n### Заголовок\n\n- пункт\n"
+            )
+            html = chat_panel.history_view.document().toHtml()
+            assert "font-weight:700" in html.replace(" ", "")
+            assert "Menlo" in html  # inline code rendered as monospace span
+            assert "<h3" in html
+            assert "<li" in html
+            assert "#ffffff" in html
         finally:
             app.setStyleSheet("")
 

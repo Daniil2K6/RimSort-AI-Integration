@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Slot
-from PySide6.QtGui import QKeyEvent
+from PySide6.QtGui import QColor, QKeyEvent, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -662,10 +662,11 @@ class ChatPanel(QWidget):
         return background, foreground, accent
 
     def _assistant_color(self) -> str:
-        background, _, accent = self._chat_colors()
+        """Assistant replies: white on dark themes, theme text on light ones."""
+        background, foreground, _ = self._chat_colors()
         if _luminance(background) < _DARK_LUMINANCE:
-            return _mix_colors(accent, "#ffffff", 0.35)
-        return accent
+            return "#ffffff"
+        return foreground
 
     def _activity_color(self) -> str:
         background, foreground, _ = self._chat_colors()
@@ -684,10 +685,21 @@ class ChatPanel(QWidget):
         )
 
     def _append_assistant(self, text: str) -> None:
-        self.history_view.append(
-            f'<p style="color:{self._assistant_color()};">'
-            f"{escape(text).replace(chr(10), '<br>')}</p>"
-        )
+        """Append an assistant reply rendered from Markdown in the reply color."""
+        if not text.strip():
+            return
+        cursor = self.history_view.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertBlock()
+        start = cursor.position()
+        cursor.insertMarkdown(text)
+        end = cursor.position()
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(self._assistant_color()))
+        cursor.mergeCharFormat(fmt)
+        self.history_view.ensureCursorVisible()
 
     def _append_activity(self, text: str) -> None:
         self.history_view.append(

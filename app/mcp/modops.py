@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from collections import Counter
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -21,7 +22,12 @@ from toposort import CircularDependencyError, toposort
 
 from app.controllers.sort_controller import Sorter
 from app.mcp.context import MCPContext
-from app.models.metadata.metadata_structure import AboutXmlMod, ListedMod, ModsConfig
+from app.models.metadata.metadata_structure import (
+    AboutXmlMod,
+    ListedMod,
+    ModsConfig,
+    ModType,
+)
 from app.services.mod_list_parser import ModListFormatError, parse_mod_list_file
 from app.sort.alphabetical_sort import do_alphabetical_sort
 from app.sort.topo_sort import describe_circular_dependencies, order_topo_levels
@@ -285,6 +291,88 @@ def update_active_list(
         "removed": removed,
         "moved": moved,
         "backup": result["backup"],
+    }
+
+
+def delete_mod(
+    ctx: MCPContext,
+    package_id: str,
+    remove_from_active: bool = True,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Delete an installed mod's files from disk.
+
+    Refuses official Ludeon expansions. When ``remove_from_active`` is true
+    the packageId is also dropped from ModsConfig.xml (with a backup).
+    ``dry_run`` only reports what would be deleted without touching disk.
+    """
+    paths = sorted(ctx.paths_for_pid(package_id))
+    if not paths:
+        raise ToolError(
+            f"No installed mod with packageId {package_id!r}. Use list_mods to search."
+        )
+
+    is_official = str(package_id).lower().startswith("ludeon.rimworld")
+    targets: list[dict[str, str]] = []
+    refused: list[dict[str, str]] = []
+    for path in paths:
+        mod = ctx.mods_metadata.get(path)
+        mod_type = getattr(mod, "mod_type", None)
+        name = getattr(mod, "name", "")
+        source = mod_type.value if isinstance(mod_type, ModType) else "Unknown"
+        if is_official or mod_type == ModType.LUDEON:
+            refused.append({"path": path, "reason": "official Ludeon expansion"})
+            continue
+        targets.append(
+            {
+                "path": path,
+                "name": name if isinstance(name, str) else "",
+                "source": source,
+            }
+        )
+
+    if not targets:
+        raise ToolError(
+            f"{package_id!r} is an official Ludeon expansion and cannot be deleted."
+        )
+
+    if dry_run:
+        return {
+            "package_id": package_id,
+            "dry_run": True,
+            "would_delete_count": len(targets),
+            "would_delete": [t["path"] for t in targets],
+            "refused": refused,
+        }
+
+    # Imported lazily so this module stays free of Qt at import time; the
+    # handler itself is reused rather than duplicated here.
+    from app.utils.generic import attempt_chmod
+
+    deleted: list[str] = []
+    for target in targets:
+        folder = Path(target["path"])
+        try:
+            shutil.rmtree(folder, onexc=attempt_chmod)
+        except OSError as exc:
+            raise ToolError(
+                f"Failed to delete {folder}: {exc}. Check the folder is not "
+                "read-only or in use."
+            ) from exc
+        deleted.append(target["path"])
+
+    active_result: dict[str, Any] | None = None
+    if remove_from_active:
+        active_result = update_active_list(ctx, remove=[package_id])
+
+    ctx.refresh()
+    return {
+        "package_id": package_id,
+        "dry_run": False,
+        "deleted_count": len(deleted),
+        "deleted": deleted,
+        "refused": refused,
+        "active_list_updated": active_result,
     }
 
 

@@ -41,6 +41,7 @@ WRITE_TOOLS = (
     "apply_modpack",
     "save_modpack",
     "update_mods",
+    "delete_mod",
 )
 
 

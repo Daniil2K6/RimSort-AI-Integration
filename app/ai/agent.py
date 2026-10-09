@@ -38,6 +38,7 @@ WRITE_TOOLS = frozenset(
         "save_modpack",
         "launch_game",
         "update_mods",
+        "delete_mod",
     }
 )
 
@@ -47,6 +48,7 @@ DRY_RUN_TOOLS: dict[str, bool] = {
     "sort_modlist": True,
     "launch_game": False,
     "update_mods": False,
+    "delete_mod": False,
 }
 
 #: Hidden from the in-app chat (would desync the GUI-selected instance).

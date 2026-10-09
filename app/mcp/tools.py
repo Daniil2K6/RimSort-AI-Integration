@@ -140,6 +140,7 @@ def register_tools(mcp: MCPServer, ctx: MCPContext) -> None:
                     "name": name,
                     "active": is_active,
                     "source": mod.mod_type.value,
+                    "publishedfileid": mod.published_file_id,
                 }
             )
 
@@ -186,6 +187,7 @@ def register_tools(mcp: MCPServer, ctx: MCPContext) -> None:
                     "authors": list(mod.authors),
                     "version": mod.mod_version,
                     "source": mod.mod_type.value,
+                    "publishedfileid": mod.published_file_id,
                     "path": path,
                     "active": path in active_paths,
                     "supported_versions": sorted(mod.supported_versions),
@@ -401,6 +403,28 @@ def register_tools(mcp: MCPServer, ctx: MCPContext) -> None:
         )
 
     # jscpd:ignore-end
+
+    @mcp.tool()
+    def delete_mod(
+        package_id: str,
+        remove_from_active: bool = True,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Delete an installed mod's files from disk.
+
+        Refuses official Ludeon expansions. remove_from_active=true (default)
+        also drops the packageId from ModsConfig.xml (with a backup). Use
+        dry_run=true first to preview what would be deleted. For Workshop
+        mods this only removes the local copy — the Steam subscription is
+        unchanged (unsubscribe in the Steam client if you want it gone for
+        good).
+        """
+        return modops.delete_mod(
+            ctx,
+            package_id,
+            remove_from_active=remove_from_active,
+            dry_run=dry_run,
+        )
 
     @mcp.tool()
     def launch_game(dry_run: bool = False) -> dict[str, Any]:

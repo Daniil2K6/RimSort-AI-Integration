@@ -16,6 +16,7 @@ from tests.mcp.conftest import MCPEnv
 EXPECTED_TOOLS = {
     "apply_modpack",
     "check_workshop_updates",
+    "delete_mod",
     "get_active_modlist",
     "get_mod_details",
     "get_status",
@@ -296,3 +297,69 @@ def test_set_instance_tool(mcp_env: MCPEnv) -> None:
     status = call(server, "set_instance", {"name": "Alt"})
     assert status["instance"] == "Alt"
     assert "Alt" in status["instances"]
+
+
+def test_list_mods_exposes_publishedfileid(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    result = call(server, "list_mods", {"query": "workshop"})
+    entry = next(e for e in result["mods"] if e["id"] == "test.workshop")
+    assert entry["publishedfileid"] == "11223344"
+
+    local = call(server, "list_mods", {"query": "alpha"})
+    assert local["mods"][0]["publishedfileid"] is None
+
+
+def test_get_mod_details_exposes_publishedfileid(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    details = call(server, "get_mod_details", {"package_id": "test.workshop"})
+    assert details["publishedfileid"] == "11223344"
+
+
+def test_delete_mod_dry_run_keeps_files(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    target = mcp_env.mods / "ModC"
+    assert target.is_dir()
+    result = call(server, "delete_mod", {"package_id": "test.modc", "dry_run": True})
+    assert result["dry_run"] is True
+    assert result["would_delete_count"] == 1
+    assert target.is_dir()  # untouched
+
+    active = call(server, "get_active_modlist")
+    assert "test.modc" not in active["mods"]  # never was active; stays gone
+
+
+def test_delete_mod_removes_files_and_active_entry(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    target = mcp_env.mods / "ModA"
+    assert target.is_dir()
+    assert "test.moda" in mcp_env.active_ids()
+
+    result = call(server, "delete_mod", {"package_id": "test.moda"})
+    assert result["deleted_count"] == 1
+    assert not target.exists()
+    assert "test.moda" not in mcp_env.active_ids()
+
+
+def test_delete_mod_refuses_official_expansion(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    with pytest.raises(ToolError, match="official Ludeon expansion"):
+        call(server, "delete_mod", {"package_id": "ludeon.rimworld.royalty"})
+
+
+def test_delete_mod_unknown_raises(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    with pytest.raises(ToolError, match="No installed mod"):
+        call(server, "delete_mod", {"package_id": "no.such.mod"})
+
+
+def test_delete_mod_keeps_active_when_disabled(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    target = mcp_env.mods / "ModB"
+    call(
+        server,
+        "delete_mod",
+        {"package_id": "test.modb", "remove_from_active": False},
+    )
+    assert not target.exists()
+    # Entry intentionally left in ModsConfig.xml (points at a now-missing mod).
+    assert "test.modb" in mcp_env.active_ids()

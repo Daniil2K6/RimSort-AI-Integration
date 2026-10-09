@@ -73,6 +73,12 @@ environments = [
     "sys_platform == 'linux'",
     "sys_platform == 'win32'",
 ]
+# cryptography is pulled in transitively (pygithub -> pyjwt[crypto]). The
+# newest cryptography dropped macOS x86_64/universal2 wheels, so uv builds
+# it from source on the Intel runner and fails on openssl-sys. Pin to the
+# last release that still ships a universal2 macOS wheel (covers Intel and
+# Apple Silicon) plus linux x86_64/aarch64 and win_amd64.
+constraint-dependencies = ["cryptography==45.0.5"]
 
 [tool.mypy]
 disallow_any_generics = true

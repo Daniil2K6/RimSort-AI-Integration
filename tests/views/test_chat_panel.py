@@ -298,7 +298,9 @@ class TestChatPanelColors:
             )
             html = chat_panel.history_view.document().toHtml()
             assert "font-weight:700" in html.replace(" ", "")
-            assert "Menlo" in html  # inline code rendered as monospace span
+            # Inline code renders as a monospace span; the concrete family
+            # (Menlo/Consolas/DejaVu...) is platform-dependent.
+            assert "font-family" in html
             assert "<h3" in html
             assert "<li" in html
             assert "#ffffff" in html

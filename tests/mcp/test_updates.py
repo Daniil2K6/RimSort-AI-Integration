@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -194,7 +195,8 @@ def test_build_script_login_with_credentials(
         assert "set_steam_guard_code ABCDE" in content
         assert "login my_user s3cret" in content
         assert "workshop_download_item 294100 111 validate" in content
-        assert script.stat().st_mode & 0o777 == 0o600
+        if os.name != "nt":  # Windows does not expose POSIX bits in st_mode
+            assert script.stat().st_mode & 0o777 == 0o600
     finally:
         script.unlink(missing_ok=True)
 

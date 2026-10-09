@@ -48,6 +48,7 @@ from app.ai.providers import (
 )
 from app.models.settings import Settings
 from app.utils.event_bus import EventBus
+from app.views.chat_completer import ModCompleter, build_mod_labels
 from app.views.chat_widgets import AssistantTurn, MessageBubble
 from app.views.dialogue import BinaryChoiceDialog
 from app.windows.ai_provider_dialog import AIProviderDialog, prompt_add_provider
@@ -123,11 +124,15 @@ class ChatPanel(QWidget):
 
         ensure_providers(self.settings)
         self._build_ui()
+        self._completer = ModCompleter(self.input, self)
+        self.input.textChanged.connect(self._completer.update_popup)
+        self._refresh_completion_labels()
         self._refresh_sidebar()
         self._update_title()
 
         EventBus().settings_have_changed.connect(self._mark_dirty)
         EventBus().do_refresh_mods_lists.connect(self._mark_dirty)
+        EventBus().do_refresh_mods_lists.connect(self._refresh_completion_labels)
 
         provider = get_active_provider(self.settings)
         if provider is not None and not self._key_configured(provider):
@@ -504,6 +509,18 @@ class ChatPanel(QWidget):
         self._dirty = True
 
     @Slot()
+    def _refresh_completion_labels(self) -> None:
+        """Reload mod names/packageIds for the chat-input completer."""
+        from app.controllers.metadata_controller import MetadataController
+
+        try:
+            controller = MetadataController.instance()
+        except Exception:
+            # Headless/tests: the singleton was never initialized.
+            return
+        self._completer.set_labels(build_mod_labels(controller.mods_metadata))
+
+    @Slot()
     def _send(self) -> None:
         if self._worker is not None:
             return
@@ -692,6 +709,8 @@ class ChatPanel(QWidget):
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
         if watched is self.input and event.type() == QEvent.Type.KeyPress:
             key_event = cast(QKeyEvent, event)
+            if self._completer.handle_key(key_event):
+                return True
             if key_event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (
                 key_event.modifiers() & Qt.KeyboardModifier.ShiftModifier
             ):

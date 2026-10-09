@@ -1223,6 +1223,24 @@ QListWidget#ChatHistoryList::item:selected {
     background-color: #ff4500;
     color: #ffffff;
 }
+QListView#ChatCompleter {
+    background-color: #3a2a2a;
+    color: #ffffff;
+    border: 1px solid #5a4a4a;
+    border-radius: 4px;
+    padding: 2px;
+}
+QListView#ChatCompleter::item {
+    padding: 3px 6px;
+    border-radius: 3px;
+}
+QListView#ChatCompleter::item:hover {
+    background-color: #4a3a3a;
+}
+QListView#ChatCompleter::item:selected {
+    background-color: #ff4500;
+    color: #ffffff;
+}
 QFrame#ChatHeader QPushButton {
     min-width: 0px;
     min-height: 0px;

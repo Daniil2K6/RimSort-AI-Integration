@@ -331,6 +331,13 @@ class TestChatPanelBubbles:
     def _has_background(block: QTextBlock) -> bool:
         return block.blockFormat().background().style() != Qt.BrushStyle.NoBrush
 
+    @staticmethod
+    def _covers(chat_panel: ChatPanel, position: int) -> bool:
+        return any(
+            start <= position <= end
+            for start, end, _ in chat_panel.history_view.bubbles
+        )
+
     def test_user_and_assistant_bubbles_are_separate(
         self, chat_panel: ChatPanel
     ) -> None:
@@ -340,18 +347,26 @@ class TestChatPanelBubbles:
 
         user_block = self._find(chat_panel, "мой вопрос")
         assistant_block = self._find(chat_panel, "ответ модели")
-        user_fmt = user_block.blockFormat()
-        assistant_fmt = assistant_block.blockFormat()
 
-        assert user_fmt.alignment() == Qt.AlignmentFlag.AlignRight
-        assert assistant_fmt.alignment() == Qt.AlignmentFlag.AlignLeft
-        # Distinct, non-transparent backgrounds.
-        assert self._has_background(user_block)
-        assert self._has_background(assistant_block)
-        assert user_fmt.background().color() != assistant_fmt.background().color()
+        assert user_block.blockFormat().alignment() == Qt.AlignmentFlag.AlignRight
+        assert assistant_block.blockFormat().alignment() == Qt.AlignmentFlag.AlignLeft
         # Bubbles are inset from opposite edges, not full-width bands.
-        assert user_fmt.leftMargin() > user_fmt.rightMargin()
-        assert assistant_fmt.rightMargin() > assistant_fmt.leftMargin()
+        assert (
+            user_block.blockFormat().leftMargin()
+            > user_block.blockFormat().rightMargin()
+        )
+        assert (
+            assistant_block.blockFormat().rightMargin()
+            > assistant_block.blockFormat().leftMargin()
+        )
+        # The tint lives in the view's bubble registry, not on the blocks.
+        assert not self._has_background(user_block)
+        assert not self._has_background(assistant_block)
+        bubbles = chat_panel.history_view.bubbles
+        assert len(bubbles) == 2
+        assert bubbles[0][2] != bubbles[1][2]
+        assert self._covers(chat_panel, user_block.position())
+        assert self._covers(chat_panel, assistant_block.position())
 
     def test_spacer_separates_consecutive_messages(self, chat_panel: ChatPanel) -> None:
         """A blank unstyled block sits between two messages."""
@@ -364,6 +379,31 @@ class TestChatPanelBubbles:
         assert between.text() == ""
         assert between.position() < second.position()
         assert not self._has_background(between)
+        # The spacer stays outside both registered bubbles.
+        assert len(chat_panel.history_view.bubbles) == 2
+        assert not self._covers(chat_panel, between.position())
+
+    def test_bubbles_hug_their_text(
+        self, chat_panel: ChatPanel, qapp: QApplication
+    ) -> None:
+        """Short messages get narrow bubbles hugging their own side."""
+        chat_panel.show()
+        qapp.processEvents()
+        width = chat_panel.history_view.viewport().width()
+        assert width > 0
+
+        chat_panel._append_user("короткий вопрос")
+        chat_panel._append_assistant("короткий ответ")
+        rects = chat_panel.history_view.bubble_rects()
+        assert len(rects) == 2
+        user_rect, assistant_rect = rects
+
+        # Neither bubble spans the whole view width.
+        assert user_rect.width() < width * 0.6
+        assert assistant_rect.width() < width * 0.6
+        # User bubble hugs the right edge, assistant the left one.
+        assert user_rect.right() > width * 0.75
+        assert assistant_rect.left() < width * 0.25
 
     def test_reply_after_list_does_not_inherit_bullet(
         self, chat_panel: ChatPanel
@@ -377,7 +417,7 @@ class TestChatPanelBubbles:
         assert not user_block.blockFormat().hasProperty(QTextFormat.Property.ObjectType)
 
     def test_error_and_activity_have_own_styles(self, chat_panel: ChatPanel) -> None:
-        """Errors get a tinted background; activity lines stay backgroundless."""
+        """Errors get a bubble; activity lines stay bubbleless."""
         chat_panel._append_user("вопрос")
         chat_panel._append_activity("загрузка...")
         chat_panel._append_error("что-то сломалось")
@@ -385,13 +425,14 @@ class TestChatPanelBubbles:
         activity_block = self._find(chat_panel, "загрузка")
         error_block = self._find(chat_panel, "сломалось")
         user_block = self._find(chat_panel, "вопрос")
-        assert not self._has_background(activity_block)
-        assert self._has_background(error_block)
+        bubbles = chat_panel.history_view.bubbles
+        # User + error bubbles; activity lines are plain background text.
+        assert len(bubbles) == 2
+        assert self._covers(chat_panel, user_block.position())
+        assert self._covers(chat_panel, error_block.position())
+        assert not self._covers(chat_panel, activity_block.position())
         # The error bubble must not reuse the accent-tinted user background.
-        assert (
-            error_block.blockFormat().background().color()
-            != user_block.blockFormat().background().color()
-        )
+        assert bubbles[0][2] != bubbles[1][2]
 
 
 class TestChatPanelSessionData:

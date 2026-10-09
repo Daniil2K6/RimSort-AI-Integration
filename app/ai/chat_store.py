@@ -133,7 +133,11 @@ class ChatStore:
         return ChatSession.from_dict(data)
 
     def list_sessions(self) -> list[ChatSession]:
-        """All readable sessions, most recently updated first."""
+        """All readable sessions, newest first by creation time.
+
+        Sorting by ``created_at`` (not ``updated_at``) keeps the history
+        list stable: opening or sending in a chat never reshuffles it.
+        """
         if not self._folder.is_dir():
             return []
         sessions: list[ChatSession] = []
@@ -141,7 +145,9 @@ class ChatStore:
             session = self.load(path.stem)
             if session is not None:
                 sessions.append(session)
-        sessions.sort(key=lambda session: session.updated_at, reverse=True)
+        sessions.sort(
+            key=lambda session: (session.created_at, session.id), reverse=True
+        )
         return sessions
 
     def delete(self, chat_id: str) -> bool:

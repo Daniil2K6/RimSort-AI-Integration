@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.ai.chat_store import ChatMessage, ChatStore, make_title
+from app.ai.chat_store import ChatMessage, ChatSession, ChatStore, make_title
 
 
 def test_new_session_is_not_listed(tmp_path: Path) -> None:
@@ -37,14 +37,15 @@ def test_save_load_roundtrip(tmp_path: Path) -> None:
     assert loaded.model == "model-1"
 
 
-def test_list_orders_by_updated_at_desc(tmp_path: Path) -> None:
-    """Sessions are listed most-recently-updated first."""
+def test_list_orders_by_created_at_desc(tmp_path: Path) -> None:
+    """Sessions are listed newest-first by creation time."""
     (tmp_path / "older.json").write_text(
         json.dumps(
             {
                 "id": "older",
                 "title": "Older",
-                "updated_at": "2026-01-01T00:00:00+00:00",
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "updated_at": "2026-01-03T00:00:00+00:00",
                 "messages": [],
             }
         )
@@ -54,13 +55,32 @@ def test_list_orders_by_updated_at_desc(tmp_path: Path) -> None:
             {
                 "id": "newer",
                 "title": "Newer",
-                "updated_at": "2026-01-02T00:00:00+00:00",
+                "created_at": "2026-01-02T00:00:00+00:00",
+                "updated_at": "2026-01-01T00:00:00+00:00",
                 "messages": [],
             }
         )
     )
 
     store = ChatStore(tmp_path)
+    # "older" was updated more recently but must stay below "newer".
+    assert [s.id for s in store.list_sessions()] == ["newer", "older"]
+
+
+def test_list_order_survives_saving_an_open_session(tmp_path: Path) -> None:
+    """Bumping updated_at by saving never reshuffles the sidebar list."""
+    store = ChatStore(tmp_path)
+    older = ChatSession(
+        id="older", created_at="2026-01-01T00:00:00+00:00", updated_at=""
+    )
+    newer = ChatSession(
+        id="newer", created_at="2026-01-02T00:00:00+00:00", updated_at=""
+    )
+    store.save(older)
+    store.save(newer)
+
+    store.save(older)  # re-saving bumps updated_at only
+
     assert [s.id for s in store.list_sessions()] == ["newer", "older"]
 
 

@@ -16,10 +16,12 @@ from html import escape
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Slot
+from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, Slot
 from PySide6.QtGui import (
     QColor,
     QKeyEvent,
+    QPainter,
+    QPaintEvent,
     QTextBlockFormat,
     QTextCharFormat,
     QTextCursor,
@@ -99,6 +101,101 @@ def _luminance(color: str) -> float:
         return 1.0
     red, green, blue = (channel / 255 for channel in rgb)
     return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+
+
+class ChatHistoryView(QTextBrowser):
+    """Message view that paints rounded, content-hugging chat bubbles.
+
+    Qt cannot round block backgrounds, so bubbles are registered by document
+    position and drawn as rounded rectangles in :meth:`paintEvent` before the
+    text is painted on top. Rectangles are derived from the laid-out text of
+    each message, so a bubble hugs its content instead of spanning the full
+    line width.
+    """
+
+    BUBBLE_RADIUS = 8
+    BUBBLE_PAD_X = 8
+    BUBBLE_PAD_Y = 3
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._bubbles: list[tuple[int, int, QColor]] = []
+
+    @property
+    def bubbles(self) -> list[tuple[int, int, QColor]]:
+        """Registered bubbles as ``(start, end, color)`` document positions."""
+        return list(self._bubbles)
+
+    def add_bubble(self, start: int, end: int, color: str) -> None:
+        """Register a bubble covering ``[start, end]`` painted in ``color``."""
+        self._bubbles.append((start, end, QColor(color)))
+        self.viewport().update()
+
+    def clear(self) -> None:
+        self._bubbles.clear()
+        super().clear()
+
+    def bubble_rects(self) -> list[QRectF]:
+        """Bubble rectangles in document coordinates (scroll not applied)."""
+        return [rect for _, rect in self._bubble_pairs()]
+
+    def _bubble_pairs(self) -> list[tuple[QColor, QRectF]]:
+        """Bubble colors paired with their document-coordinate rectangles."""
+        document = self.document()
+        layout = document.documentLayout()
+        pairs: list[tuple[QColor, QRectF]] = []
+        for start, end, color in self._bubbles:
+            union = QRectF()
+            block = document.findBlock(start)
+            while block.isValid() and block.position() <= end:
+                if block.length() > 1:
+                    block_rect = layout.blockBoundingRect(block)
+                    text_layout = block.layout()
+                    block_format = block.blockFormat()
+                    alignment = block_format.alignment()
+                    area_left = block_rect.x() + block_format.leftMargin()
+                    area_right = area_left + block_rect.width()
+                    for index in range(text_layout.lineCount()):
+                        line = text_layout.lineAt(index)
+                        width = line.naturalTextWidth()
+                        if alignment & Qt.AlignmentFlag.AlignRight:
+                            x = area_right - width
+                        elif alignment & Qt.AlignmentFlag.AlignHCenter:
+                            x = area_left + (block_rect.width() - width) / 2
+                        else:
+                            x = block_rect.x() + line.x()
+                        line_rect = QRectF(
+                            x, block_rect.y(), width, block_rect.height()
+                        )
+                        union = line_rect if union.isNull() else union.united(line_rect)
+                block = block.next()
+            if not union.isNull():
+                rect = union.adjusted(
+                    -self.BUBBLE_PAD_X,
+                    -self.BUBBLE_PAD_Y,
+                    self.BUBBLE_PAD_X,
+                    self.BUBBLE_PAD_Y,
+                )
+                rect.setHeight(max(rect.height(), 2 * self.BUBBLE_RADIUS))
+                pairs.append((color, rect))
+        return pairs
+
+    def paintEvent(self, event: QPaintEvent) -> None:
+        pairs = self._bubble_pairs()
+        if pairs:
+            offset = QPointF(
+                -self.horizontalScrollBar().value(),
+                -self.verticalScrollBar().value(),
+            )
+            with QPainter(self.viewport()) as painter:
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                painter.setClipRect(event.rect())
+                painter.setPen(Qt.PenStyle.NoPen)
+                for color, rect in pairs:
+                    radius = min(self.BUBBLE_RADIUS, rect.height() / 2)
+                    painter.setBrush(color)
+                    painter.drawRoundedRect(rect.translated(offset), radius, radius)
+        super().paintEvent(event)
 
 
 class ChatPanel(QWidget):
@@ -198,7 +295,7 @@ class ChatPanel(QWidget):
         self.status_label = QLabel(body)
         body_layout.addWidget(self.status_label)
 
-        self.history_view = QTextBrowser(body)
+        self.history_view = ChatHistoryView(body)
         self.history_view.setObjectName("ChatHistory")
         self.history_view.setOpenExternalLinks(True)
         self.history_view.setReadOnly(True)
@@ -362,7 +459,13 @@ class ChatPanel(QWidget):
         self.title_label.setText(self._session.title or self.tr("New chat"))
 
     def _refresh_sidebar(self) -> None:
-        """Rebuild the history list from the store, keeping selection."""
+        """Rebuild the history list from the store, keeping selection.
+
+        ``QListWidget.clear()`` also resets the scrollbar, so the previous
+        scroll position is restored to keep the list visually still.
+        """
+        scrollbar = self.history_list.verticalScrollBar()
+        scroll = scrollbar.value()
         self.history_list.blockSignals(True)
         self.history_list.clear()
         for session in self._store.list_sessions():
@@ -374,6 +477,7 @@ class ChatPanel(QWidget):
             if session.id == self._session.id:
                 item.setSelected(True)
         self.history_list.blockSignals(False)
+        scrollbar.setValue(scroll)
 
     @Slot(QListWidgetItem)
     def _on_history_item_clicked(self, item: QListWidgetItem) -> None:
@@ -728,12 +832,11 @@ class ChatPanel(QWidget):
         self,
         start: int,
         end: int,
-        background: str,
         alignment: Qt.AlignmentFlag | None = None,
         left_margin: int = 6,
         right_margin: int = 6,
     ) -> None:
-        """Paint ``background`` across the non-empty blocks in [start, end].
+        """Set wrap limits and alignment on the non-empty blocks in [start, end].
 
         Empty placeholder blocks (e.g. when a reply starts with a list)
         stay unstyled so they read as natural spacing, not as stubs.
@@ -743,7 +846,6 @@ class ChatPanel(QWidget):
         while block.isValid() and block.position() <= end:
             if block.length() > 1:
                 fmt = QTextBlockFormat()
-                fmt.setBackground(QColor(background))
                 fmt.setLeftMargin(left_margin)
                 fmt.setRightMargin(right_margin)
                 fmt.setTopMargin(0)
@@ -755,6 +857,15 @@ class ChatPanel(QWidget):
                 block_cursor.mergeBlockFormat(fmt)
             block = block.next()
 
+    def _apply_text_color(self, start: int, end: int, color: str) -> None:
+        """Set the foreground of every character in [start, end]."""
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(color))
+        cursor = QTextCursor(self.history_view.document())
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.mergeCharFormat(fmt)
+
     def _append_user(self, text: str) -> None:
         if not text.strip():
             return
@@ -765,10 +876,10 @@ class ChatPanel(QWidget):
         self._style_message_blocks(
             start,
             end,
-            self._user_background(),
             Qt.AlignmentFlag.AlignRight,
             left_margin=self._bubble_indent(),
         )
+        self.history_view.add_bubble(start, end, self._user_background())
         self.history_view.ensureCursorVisible()
 
     def _append_assistant(self, text: str) -> None:
@@ -782,16 +893,11 @@ class ChatPanel(QWidget):
         self._style_message_blocks(
             start,
             end,
-            self._assistant_background(),
             Qt.AlignmentFlag.AlignLeft,
             right_margin=self._bubble_indent(),
         )
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(self._assistant_color()))
-        style_cursor = QTextCursor(self.history_view.document())
-        style_cursor.setPosition(start)
-        style_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-        style_cursor.mergeCharFormat(fmt)
+        self._apply_text_color(start, end, self._assistant_color())
+        self.history_view.add_bubble(start, end, self._assistant_background())
         self.history_view.ensureCursorVisible()
 
     def _append_activity(self, text: str) -> None:
@@ -814,13 +920,8 @@ class ChatPanel(QWidget):
         self._style_message_blocks(
             start,
             end,
-            self._error_background(),
             Qt.AlignmentFlag.AlignLeft,
         )
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(self._error_color()))
-        style_cursor = QTextCursor(self.history_view.document())
-        style_cursor.setPosition(start)
-        style_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-        style_cursor.mergeCharFormat(fmt)
+        self._apply_text_color(start, end, self._error_color())
+        self.history_view.add_bubble(start, end, self._error_background())
         self.history_view.ensureCursorVisible()

@@ -7,8 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from PySide6.QtCore import QCoreApplication, Qt
-from PySide6.QtGui import QTextBlock, QTextFormat
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QInputDialog
 
 from app.ai.agent import CANCELLED_TEXT
 from app.ai.chat_store import ChatMessage, ChatSession
@@ -20,6 +19,7 @@ from app.views.chat_panel import (
     _mix_colors,
     _parse_hex_color,
 )
+from app.views.chat_widgets import AssistantTurn, MessageBubble, ToolCallRow
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -31,12 +31,28 @@ def chat_panel(
     fresh_event_bus: None,
 ) -> Generator[ChatPanel, None, None]:
     """A ChatPanel with real Settings backed by the mocked AppInfo."""
+    settings = Settings()
+    # The mock AppInfo storage is session-wide: drop any providers another
+    # test may have persisted so every panel starts from a clean slate.
+    settings.ai_providers = []
+    settings.ai_provider_id = ""
+    settings.ai_model = ""
+    settings.ai_base_url = ""
+    settings.ai_api_key = ""
     panel = ChatPanel(
-        settings=Settings(),
+        settings=settings,
         show_settings_dialog=MagicMock(),
     )
     yield panel
     panel.shutdown()
+
+
+def _configure_model(panel: ChatPanel) -> None:
+    """Give the panel a usable localhost provider and model."""
+    provider = new_provider("Local", "http://localhost:11434/v1", models=["test-model"])
+    panel.settings.ai_providers = [provider]
+    panel.settings.ai_provider_id = provider["id"]
+    panel.settings.ai_model = "test-model"
 
 
 def _save_session_with_message(panel: ChatPanel, title: str, text: str) -> str:
@@ -45,6 +61,19 @@ def _save_session_with_message(panel: ChatPanel, title: str, text: str) -> str:
     session.messages.append(ChatMessage(role="user", content=text))
     panel._store.save(session)
     return session.id
+
+
+class _FakeWorker:
+    def __init__(self, **kwargs: Any) -> None:
+        self.activity = MagicMock()
+        self.stream_text = MagicMock()
+        self.confirm_requested = MagicMock()
+        self.finished_ok = MagicMock()
+        self.failed = MagicMock()
+        self.finished = MagicMock()
+
+    def start(self) -> None:
+        return None
 
 
 class TestChatPanelLayout:
@@ -94,7 +123,7 @@ class TestChatPanelSessions:
 
         assert chat_panel._session.id == chat_id
         assert chat_panel.title_label.text() == "Saved chat"
-        assert "payload" in chat_panel.history_view.toPlainText()
+        assert "payload" in chat_panel._chat_text()
 
     def test_new_chat_clears_view_and_keeps_saves(self, chat_panel: ChatPanel) -> None:
         chat_id = _save_session_with_message(chat_panel, "Old", "bye")
@@ -103,7 +132,7 @@ class TestChatPanelSessions:
 
         assert chat_panel._session.is_empty
         assert chat_panel.title_label.text() == "New chat"
-        assert "bye" not in chat_panel.history_view.toPlainText()
+        assert "bye" not in chat_panel._chat_text()
         assert chat_panel._store.load(chat_id) is not None
         assert chat_panel.history_list.count() == 1
 
@@ -123,20 +152,8 @@ class TestChatPanelSessions:
         """The first sent message titles the chat and persists it."""
         from app.views import chat_panel as chat_panel_module
 
-        class _FakeWorker:
-            def __init__(self, **kwargs: Any) -> None:
-                self.activity = MagicMock()
-                self.stream_text = MagicMock()
-                self.confirm_requested = MagicMock()
-                self.finished_ok = MagicMock()
-                self.failed = MagicMock()
-                self.finished = MagicMock()
-
-            def start(self) -> None:
-                return None
-
         monkeypatch.setattr(chat_panel_module, "AgentWorker", _FakeWorker)
-        chat_panel.settings.ai_model = "test-model"
+        _configure_model(chat_panel)
         chat_panel.input.setPlainText("sort my mods please")
 
         chat_panel._send()
@@ -261,7 +278,7 @@ class TestChatPanelColors:
         assert chat_panel._assistant_color() == "#000000"
         # Light background -> dark error red.
         assert chat_panel._error_color() == "#c01c28"
-        assert chat_panel.history_view.objectName() == "ChatHistory"
+        assert chat_panel.chat_scroll.objectName() == "ChatHistory"
         assert chat_panel.input.objectName() == "ChatInput"
 
     def test_dark_theme_colors_are_readable(self, chat_panel: ChatPanel) -> None:
@@ -270,7 +287,7 @@ class TestChatPanelColors:
         assert isinstance(app, QApplication)
         # Simulate the app stylesheet containing the theme rules.
         app.setStyleSheet(
-            "QTextBrowser#ChatHistory { background-color: #19232d;"
+            "QScrollArea#ChatHistory { background-color: #19232d;"
             " color: #e6edf3; }"
             "QPushButton#primaryButton { background-color: #346792; }"
         )
@@ -292,13 +309,20 @@ class TestChatPanelColors:
         app = QApplication.instance()
         assert isinstance(app, QApplication)
         app.setStyleSheet(
-            "QTextBrowser#ChatHistory { background-color: #19232d; color: #e6edf3; }"
+            "QScrollArea#ChatHistory { background-color: #19232d; color: #e6edf3; }"
         )
         try:
             chat_panel._append_assistant(
                 "**жирный** и `код`\n\n### Заголовок\n\n- пункт\n"
             )
-            html = chat_panel.history_view.document().toHtml()
+            turn = next(
+                widget
+                for widget in chat_panel._turn_widgets
+                if isinstance(widget, AssistantTurn)
+            )
+            bubble = turn.bubble()
+            assert bubble is not None
+            html = bubble.rendered_html()
             assert "font-weight:700" in html.replace(" ", "")
             # Inline code renders as a monospace span; the concrete family
             # (Menlo/Consolas/DejaVu...) is platform-dependent.
@@ -318,125 +342,94 @@ class TestChatPanelColors:
         assert item.isSelected()
 
 
-class TestChatPanelBubbles:
-    def _blocks(self, chat_panel: ChatPanel) -> list[QTextBlock]:
-        document = chat_panel.history_view.document()
-        blocks = []
-        block = document.firstBlock()
-        while block.isValid():
-            blocks.append(block)
-            block = block.next()
-        return blocks
-
-    def _find(self, chat_panel: ChatPanel, needle: str) -> QTextBlock:
-        return next(b for b in self._blocks(chat_panel) if needle in b.text())
-
-    @staticmethod
-    def _has_background(block: QTextBlock) -> bool:
-        return block.blockFormat().background().style() != Qt.BrushStyle.NoBrush
-
-    @staticmethod
-    def _covers(chat_panel: ChatPanel, position: int) -> bool:
-        return any(
-            start <= position <= end
-            for start, end, _ in chat_panel.history_view.bubbles
-        )
+class TestChatPanelMessages:
+    def _bubbles(self, chat_panel: ChatPanel) -> list[MessageBubble]:
+        return [
+            widget
+            for widget in chat_panel._turn_widgets
+            if isinstance(widget, MessageBubble)
+        ]
 
     def test_user_and_assistant_bubbles_are_separate(
         self, chat_panel: ChatPanel
     ) -> None:
-        """User is right-aligned with an accent bubble; assistant is left."""
+        """User is a right-aligned accent bubble; assistant is a left turn."""
         chat_panel._append_user("мой вопрос")
         chat_panel._append_assistant("ответ модели")
 
-        user_block = self._find(chat_panel, "мой вопрос")
-        assistant_block = self._find(chat_panel, "ответ модели")
+        assert len(chat_panel._turn_widgets) == 2
+        user_bubble, assistant_turn = chat_panel._turn_widgets
+        assert isinstance(user_bubble, MessageBubble)
+        assert isinstance(assistant_turn, AssistantTurn)
+        # Bubbles carry their role and their own colors.
+        assert user_bubble.property("role") == "user"
+        assert user_bubble.plain_text() == "мой вопрос"
+        assert "ответ модели" in assistant_turn.plain_text()
+        assistant_bubble = assistant_turn.bubble()
+        assert assistant_bubble is not None
+        assert user_bubble.background_color() != assistant_bubble.background_color()
 
-        assert user_block.blockFormat().alignment() == Qt.AlignmentFlag.AlignRight
-        assert assistant_block.blockFormat().alignment() == Qt.AlignmentFlag.AlignLeft
-        # Bubbles are inset from opposite edges, not full-width bands.
-        assert (
-            user_block.blockFormat().leftMargin()
-            > user_block.blockFormat().rightMargin()
-        )
-        assert (
-            assistant_block.blockFormat().rightMargin()
-            > assistant_block.blockFormat().leftMargin()
-        )
-        # The tint lives in the view's bubble registry, not on the blocks.
-        assert not self._has_background(user_block)
-        assert not self._has_background(assistant_block)
-        bubbles = chat_panel.history_view.bubbles
-        assert len(bubbles) == 2
-        assert bubbles[0][2] != bubbles[1][2]
-        assert self._covers(chat_panel, user_block.position())
-        assert self._covers(chat_panel, assistant_block.position())
+    def test_activity_rows_attach_to_the_live_turn(self, chat_panel: ChatPanel) -> None:
+        """Tool activity lines become rows on the live assistant turn."""
+        chat_panel._worker = cast(Any, MagicMock())  # simulate a running agent
+        chat_panel._append_activity("… list_mods()")
+        chat_panel._append_activity("→ list_mods()")
+        turn = chat_panel._live_turn
+        assert turn is not None
+        rows = [child for child in turn.findChildren(ToolCallRow)]
+        assert len(rows) == 1  # pending + done merge into one row
+        assert rows[0].plain_text().endswith("list_mods()")
+        assert "→" in rows[0].plain_text()
+        chat_panel._worker = None
 
-    def test_spacer_separates_consecutive_messages(self, chat_panel: ChatPanel) -> None:
-        """A blank unstyled block sits between two messages."""
-        chat_panel._append_user("первое")
-        chat_panel._append_user("второе")
+    def test_error_gets_its_own_bubble(self, chat_panel: ChatPanel) -> None:
+        chat_panel._append_error("что-то сломалось")
 
-        first = self._find(chat_panel, "первое")
-        second = self._find(chat_panel, "второе")
-        between = first.next()
-        assert between.text() == ""
-        assert between.position() < second.position()
-        assert not self._has_background(between)
-        # The spacer stays outside both registered bubbles.
-        assert len(chat_panel.history_view.bubbles) == 2
-        assert not self._covers(chat_panel, between.position())
+        bubble = self._bubbles(chat_panel)[0]
+        assert bubble.property("role") == "error"
+        assert bubble.plain_text() == "что-то сломалось"
 
-    def test_bubbles_hug_their_text(
+    def test_bubbles_span_the_chat_width(
         self, chat_panel: ChatPanel, qapp: QApplication
     ) -> None:
-        """Short messages get narrow bubbles hugging their own side."""
+        """Messages are full-column cards so long text always wraps."""
+        chat_panel.resize(600, 400)
         chat_panel.show()
         qapp.processEvents()
-        width = chat_panel.history_view.viewport().width()
-        assert width > 0
 
         chat_panel._append_user("короткий вопрос")
         chat_panel._append_assistant("короткий ответ")
-        rects = chat_panel.history_view.bubble_rects()
-        assert len(rects) == 2
-        user_rect, assistant_rect = rects
+        qapp.processEvents()
 
-        # Neither bubble spans the whole view width.
-        assert user_rect.width() < width * 0.6
-        assert assistant_rect.width() < width * 0.6
-        # User bubble hugs the right edge, assistant the left one.
-        assert user_rect.right() > width * 0.75
-        assert assistant_rect.left() < width * 0.25
+        user_bubble, assistant_turn = chat_panel._turn_widgets
+        assert isinstance(user_bubble, MessageBubble)
+        assert isinstance(assistant_turn, AssistantTurn)
+        assistant_bubble = assistant_turn.bubble()
+        assert assistant_bubble is not None
+        viewport = chat_panel.chat_scroll.viewport().width()
+        assert viewport > 0
+        assert user_bubble.width() > viewport * 0.8
+        assert assistant_bubble.width() > viewport * 0.8
 
-    def test_reply_after_list_does_not_inherit_bullet(
+    def test_new_messages_are_inserted_before_the_stretch(
         self, chat_panel: ChatPanel
     ) -> None:
-        """A plain message following a markdown list starts a fresh block."""
-        chat_panel._append_assistant("- пункт\n- ещё пункт")
-        chat_panel._append_user("обычный ответ без списка")
+        """The trailing stretch stays last so messages stack from the top."""
+        chat_panel._append_user("первое")
+        chat_panel._append_assistant("второе")
 
-        user_block = self._find(chat_panel, "обычный ответ без списка")
-        assert user_block.blockFormat().alignment() == Qt.AlignmentFlag.AlignRight
-        assert not user_block.blockFormat().hasProperty(QTextFormat.Property.ObjectType)
+        count = chat_panel._chat_layout.count()
+        last_item = chat_panel._chat_layout.itemAt(count - 1)
+        assert last_item is not None
+        assert last_item.widget() is None  # the stretch spacer
 
-    def test_error_and_activity_have_own_styles(self, chat_panel: ChatPanel) -> None:
-        """Errors get a bubble; activity lines stay bubbleless."""
-        chat_panel._append_user("вопрос")
-        chat_panel._append_activity("загрузка...")
-        chat_panel._append_error("что-то сломалось")
+    def test_clear_view_keeps_layout_and_stretch(self, chat_panel: ChatPanel) -> None:
+        chat_panel._append_user("до очистки")
+        chat_panel._clear_chat_view()
 
-        activity_block = self._find(chat_panel, "загрузка")
-        error_block = self._find(chat_panel, "сломалось")
-        user_block = self._find(chat_panel, "вопрос")
-        bubbles = chat_panel.history_view.bubbles
-        # User + error bubbles; activity lines are plain background text.
-        assert len(bubbles) == 2
-        assert self._covers(chat_panel, user_block.position())
-        assert self._covers(chat_panel, error_block.position())
-        assert not self._covers(chat_panel, activity_block.position())
-        # The error bubble must not reuse the accent-tinted user background.
-        assert bubbles[0][2] != bubbles[1][2]
+        assert chat_panel._turn_widgets == []
+        assert chat_panel._chat_text() == ""
+        assert chat_panel._chat_layout.count() == 1  # only the stretch
 
 
 class TestChatPanelStreaming:
@@ -446,34 +439,36 @@ class TestChatPanelStreaming:
         """Live deltas appear immediately; finish re-renders them as Markdown."""
         chat_panel._on_stream_text("сначала ")
         chat_panel._on_stream_text("plain, потом ")
-        assert "сначала plain, потом" in chat_panel.history_view.toPlainText()
-        assert len(chat_panel.history_view.bubbles) == 1
+        turn = chat_panel._live_turn
+        assert turn is not None
+        assert "сначала plain, потом" in turn.plain_text()
 
         chat_panel._on_stream_text("**жирный** финал")
         chat_panel._on_finished_ok("**жирный** финал")
 
-        text = chat_panel.history_view.toPlainText()
-        assert "**жирный**" not in text  # markdown was rendered, not raw
-        assert "жирный финал" in text
-        html = chat_panel.history_view.toHtml()
+        assert chat_panel._live_turn is None
+        bubble = turn.bubble()
+        assert bubble is not None
+        html = bubble.rendered_html()
         assert "font-weight:700" in html.replace(" ", "")
         # The streamed text is what gets persisted.
         saved = chat_panel._session.messages[-1]
         assert saved.role == "assistant"
         assert saved.content.startswith("сначала plain")
-        # One bubble still covers the whole reply.
-        assert len(chat_panel.history_view.bubbles) == 1
+        assert "**жирный** финал" in saved.content
 
     def test_stream_cancel_keeps_partial_and_skips_save(
         self, chat_panel: ChatPanel
     ) -> None:
         """Stopping mid-stream keeps the partial text and saves nothing."""
         chat_panel._on_stream_text("частичный ответ")
+        turn = chat_panel._live_turn
+        assert turn is not None
         chat_panel._on_finished_ok(CANCELLED_TEXT)
 
-        assert "частичный ответ" in chat_panel.history_view.toPlainText()
+        assert "частичный ответ" in chat_panel._chat_text()
         assert all(m.role != "assistant" for m in chat_panel._session.messages)
-        assert "Generation stopped." in chat_panel.history_view.toPlainText()
+        assert "Generation stopped." in chat_panel._chat_text()
 
     def test_stream_failure_keeps_partial_and_reports_error(
         self, chat_panel: ChatPanel
@@ -482,10 +477,71 @@ class TestChatPanelStreaming:
         chat_panel._on_stream_text("до ошибки")
         chat_panel._on_failed("сбой связи")
 
-        text = chat_panel.history_view.toPlainText()
+        text = chat_panel._chat_text()
         assert "до ошибки" in text
         assert "сбой связи" in text
-        assert chat_panel._stream_start is None
+        assert chat_panel._live_turn is None
+
+
+class TestChatPanelActions:
+    def test_regenerate_drops_last_reply_and_restarts(
+        self, chat_panel: ChatPanel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Regenerate removes the trailing reply and reruns the agent."""
+        from app.views import chat_panel as chat_panel_module
+
+        monkeypatch.setattr(chat_panel_module, "AgentWorker", _FakeWorker)
+        _configure_model(chat_panel)
+        chat_panel._session.messages.append(ChatMessage(role="user", content="вопрос"))
+        chat_panel._session.messages.append(
+            ChatMessage(role="assistant", content="старый ответ")
+        )
+        chat_panel._render_session()
+
+        chat_panel._regenerate()
+
+        assert all(m.role != "assistant" for m in chat_panel._session.messages)
+        assert "старый ответ" not in chat_panel._chat_text()
+        assert "вопрос" in chat_panel._chat_text()
+        assert chat_panel._worker is not None
+        chat_panel._worker = None
+
+    def test_edit_last_user_rewrites_and_resends(
+        self, chat_panel: ChatPanel, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Editing the last user message replaces it and sends again."""
+        from app.views import chat_panel as chat_panel_module
+
+        monkeypatch.setattr(chat_panel_module, "AgentWorker", _FakeWorker)
+        _configure_model(chat_panel)
+        chat_panel._session.messages.append(ChatMessage(role="user", content="старое"))
+        chat_panel._render_session()
+        monkeypatch.setattr(
+            QInputDialog,
+            "getText",
+            lambda *args, **kwargs: ("новый вопрос", True),
+        )
+
+        chat_panel._edit_last_user()
+
+        assert len(chat_panel._session.messages) == 1
+        assert chat_panel._session.messages[0].content == "новый вопрос"
+        assert "старое" not in chat_panel._chat_text()
+        assert "новый вопрос" in chat_panel._chat_text()
+        assert chat_panel._worker is not None
+        chat_panel._worker = None
+
+    def test_regenerate_button_enabled_only_after_reply(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        assert not chat_panel.regenerate_button.isEnabled()
+        chat_panel._session.messages.append(
+            ChatMessage(role="assistant", content="готово")
+        )
+        chat_panel._update_actions()
+        assert chat_panel.regenerate_button.isEnabled()
+        chat_panel._set_busy(True)
+        assert not chat_panel.regenerate_button.isEnabled()
 
 
 class TestChatPanelSessionData:

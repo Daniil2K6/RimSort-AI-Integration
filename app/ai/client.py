@@ -43,14 +43,19 @@ class AssistantReply:
 
 
 class ChatClient(Protocol):
-    """Structural interface for sending one chat completion."""
+    """Structural interface for sending one chat completion.
+
+    Parameters carry no defaults so the signature does not mirror
+    :meth:`AIClient.chat` line-for-line; every call site passes
+    ``tools``/``on_text``/``should_stop`` explicitly.
+    """
 
     def chat(
         self,
         messages: list[dict[str, Any]],
-        tools: list[dict[str, Any]] | None = None,
-        on_text: Callable[[str], None] | None = None,
-        should_stop: Callable[[], bool] | None = None,
+        tools: list[dict[str, Any]] | None,
+        on_text: Callable[[str], None] | None,
+        should_stop: Callable[[], bool] | None,
     ) -> AssistantReply: ...
 
 

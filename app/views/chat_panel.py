@@ -12,20 +12,11 @@ from __future__ import annotations
 import re
 import threading
 from collections.abc import Callable
-from html import escape
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
-from PySide6.QtCore import QEvent, QObject, QPoint, QPointF, QRectF, Qt, Slot
-from PySide6.QtGui import (
-    QColor,
-    QKeyEvent,
-    QPainter,
-    QPaintEvent,
-    QTextBlockFormat,
-    QTextCharFormat,
-    QTextCursor,
-)
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Slot
+from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -38,8 +29,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSplitter,
-    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +48,7 @@ from app.ai.providers import (
 )
 from app.models.settings import Settings
 from app.utils.event_bus import EventBus
+from app.views.chat_widgets import AssistantTurn, MessageBubble
 from app.views.dialogue import BinaryChoiceDialog
 from app.windows.ai_provider_dialog import AIProviderDialog, prompt_add_provider
 
@@ -103,113 +95,6 @@ def _luminance(color: str) -> float:
     return 0.2126 * red + 0.7152 * green + 0.0722 * blue
 
 
-class ChatHistoryView(QTextBrowser):
-    """Message view that paints rounded, content-hugging chat bubbles.
-
-    Qt cannot round block backgrounds, so bubbles are registered by document
-    position and drawn as rounded rectangles in :meth:`paintEvent` before the
-    text is painted on top. Rectangles are derived from the laid-out text of
-    each message, so a bubble hugs its content instead of spanning the full
-    line width.
-    """
-
-    BUBBLE_RADIUS = 8
-    BUBBLE_PAD_X = 8
-    BUBBLE_PAD_Y = 3
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._bubbles: list[tuple[int, int, QColor]] = []
-
-    @property
-    def bubbles(self) -> list[tuple[int, int, QColor]]:
-        """Registered bubbles as ``(start, end, color)`` document positions."""
-        return list(self._bubbles)
-
-    def add_bubble(self, start: int, end: int, color: str) -> None:
-        """Register a bubble covering ``[start, end]`` painted in ``color``."""
-        self._bubbles.append((start, end, QColor(color)))
-        self.viewport().update()
-
-    def touch_bubble(self, start: int, end: int) -> None:
-        """Update the end position of the bubble registered at ``start``.
-
-        Used while streaming: the assistant bubble grows as text arrives.
-        """
-        for index, (bubble_start, _, color) in enumerate(self._bubbles):
-            if bubble_start == start:
-                self._bubbles[index] = (start, end, color)
-                self.viewport().update()
-                return
-        self.viewport().update()
-
-    def clear(self) -> None:
-        self._bubbles.clear()
-        super().clear()
-
-    def bubble_rects(self) -> list[QRectF]:
-        """Bubble rectangles in document coordinates (scroll not applied)."""
-        return [rect for _, rect in self._bubble_pairs()]
-
-    def _bubble_pairs(self) -> list[tuple[QColor, QRectF]]:
-        """Bubble colors paired with their document-coordinate rectangles."""
-        document = self.document()
-        layout = document.documentLayout()
-        pairs: list[tuple[QColor, QRectF]] = []
-        for start, end, color in self._bubbles:
-            union = QRectF()
-            block = document.findBlock(start)
-            while block.isValid() and block.position() <= end:
-                if block.length() > 1:
-                    block_rect = layout.blockBoundingRect(block)
-                    text_layout = block.layout()
-                    block_format = block.blockFormat()
-                    alignment = block_format.alignment()
-                    area_left = block_rect.x() + block_format.leftMargin()
-                    area_right = area_left + block_rect.width()
-                    for index in range(text_layout.lineCount()):
-                        line = text_layout.lineAt(index)
-                        width = line.naturalTextWidth()
-                        if alignment & Qt.AlignmentFlag.AlignRight:
-                            x = area_right - width
-                        elif alignment & Qt.AlignmentFlag.AlignHCenter:
-                            x = area_left + (block_rect.width() - width) / 2
-                        else:
-                            x = block_rect.x() + line.x()
-                        line_rect = QRectF(
-                            x, block_rect.y(), width, block_rect.height()
-                        )
-                        union = line_rect if union.isNull() else union.united(line_rect)
-                block = block.next()
-            if not union.isNull():
-                rect = union.adjusted(
-                    -self.BUBBLE_PAD_X,
-                    -self.BUBBLE_PAD_Y,
-                    self.BUBBLE_PAD_X,
-                    self.BUBBLE_PAD_Y,
-                )
-                rect.setHeight(max(rect.height(), 2 * self.BUBBLE_RADIUS))
-                pairs.append((color, rect))
-        return pairs
-
-    def paintEvent(self, event: QPaintEvent) -> None:
-        pairs = self._bubble_pairs()
-        if pairs:
-            offset = QPointF(
-                -self.horizontalScrollBar().value(),
-                -self.verticalScrollBar().value(),
-            )
-            with QPainter(self.viewport()) as painter:
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-                painter.setClipRect(event.rect())
-                painter.setPen(Qt.PenStyle.NoPen)
-                for color, rect in pairs:
-                    radius = min(self.BUBBLE_RADIUS, rect.height() / 2)
-                    painter.setBrush(color)
-                    painter.drawRoundedRect(rect.translated(offset), radius, radius)
-        super().paintEvent(event)
-
-
 class ChatPanel(QWidget):
     """Chat UI: history sidebar, message view, input box, provider menu."""
 
@@ -231,9 +116,10 @@ class ChatPanel(QWidget):
         self._server_lock = threading.Lock()
         self._collapsed = False
         self._model_submenus: list[QMenu] = []
-        self._stream_start: int | None = None
-        self._stream_end: int | None = None
-        self._stream_parts: list[str] = []
+        self._turn_widgets: list[QWidget] = []
+        self._live_turn: AssistantTurn | None = None
+        self._last_user_bubble: MessageBubble | None = None
+        self._last_assistant_turn: AssistantTurn | None = None
 
         ensure_providers(self.settings)
         self._build_ui()
@@ -310,11 +196,21 @@ class ChatPanel(QWidget):
         self.status_label = QLabel(body)
         body_layout.addWidget(self.status_label)
 
-        self.history_view = ChatHistoryView(body)
-        self.history_view.setObjectName("ChatHistory")
-        self.history_view.setOpenExternalLinks(True)
-        self.history_view.setReadOnly(True)
-        body_layout.addWidget(self.history_view, stretch=1)
+        self.chat_scroll = QScrollArea(body)
+        self.chat_scroll.setObjectName("ChatHistory")
+        self.chat_scroll.setWidgetResizable(True)
+        self.chat_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.chat_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self._chat_container = QWidget(self.chat_scroll)
+        self._chat_container.setObjectName("ChatContainer")
+        self._chat_layout = QVBoxLayout(self._chat_container)
+        self._chat_layout.setContentsMargins(10, 10, 10, 10)
+        self._chat_layout.setSpacing(10)
+        self._chat_layout.addStretch(1)
+        self.chat_scroll.setWidget(self._chat_container)
+        body_layout.addWidget(self.chat_scroll, stretch=1)
 
         self.input = QPlainTextEdit(body)
         self.input.setObjectName("ChatInput")
@@ -330,9 +226,15 @@ class ChatPanel(QWidget):
         self.clear_button = QPushButton(self.tr("Clear"), body)
         self.stop_button = QPushButton(self.tr("Stop"), body)
         self.send_button = QPushButton(self.tr("Send"), body)
+        self.regenerate_button = QPushButton(self.tr("Regenerate"), body)
+        self.regenerate_button.setToolTip(
+            self.tr("Discard the last reply and run the agent again")
+        )
         self.stop_button.setEnabled(False)
+        self.regenerate_button.setEnabled(False)
         buttons.addWidget(self.clear_button)
         buttons.addStretch(1)
+        buttons.addWidget(self.regenerate_button)
         buttons.addWidget(self.stop_button)
         buttons.addWidget(self.send_button)
         body_layout.addLayout(buttons)
@@ -350,6 +252,7 @@ class ChatPanel(QWidget):
         self.clear_button.clicked.connect(self._clear)
         self.stop_button.clicked.connect(self._request_stop)
         self.send_button.clicked.connect(self._send)
+        self.regenerate_button.clicked.connect(self._regenerate)
 
     def focus_input(self) -> None:
         """Give keyboard focus to the message box (used by the View menu)."""
@@ -506,7 +409,7 @@ class ChatPanel(QWidget):
             return
         self._save_session()
         self._session = self._store.new_session()
-        self.history_view.clear()
+        self._clear_chat_view()
         self.status_label.clear()
         self._update_title()
         self._refresh_sidebar()
@@ -526,12 +429,13 @@ class ChatPanel(QWidget):
         self._refresh_sidebar()
 
     def _render_session(self) -> None:
-        self.history_view.clear()
+        self._clear_chat_view()
         for message in self._session.messages:
             if message.role == "user":
                 self._append_user(message.content)
             elif message.role == "assistant":
                 self._append_assistant(message.content)
+        self._update_actions()
 
     @Slot(QPoint)
     def _show_history_menu(self, pos: QPoint) -> None:
@@ -590,7 +494,7 @@ class ChatPanel(QWidget):
         self._store.delete(chat_id)
         if chat_id == self._session.id:
             self._session = self._store.new_session()
-            self.history_view.clear()
+            self._clear_chat_view()
             self._update_title()
         self._refresh_sidebar()
 
@@ -618,7 +522,13 @@ class ChatPanel(QWidget):
         self._session.messages.append(ChatMessage(role="user", content=text))
         self._save_session()
         self._append_user(text)
+        self._start_worker()
 
+    def _start_worker(self) -> None:
+        """Spin up the agent worker for the current session history."""
+        provider = get_active_provider(self.settings)
+        if provider is None or not self.settings.ai_model.strip():
+            return
         api_messages: list[dict[str, Any]] = [
             {
                 "role": "system",
@@ -660,9 +570,49 @@ class ChatPanel(QWidget):
             return
         self._store.delete(self._session.id)
         self._session = self._store.new_session()
-        self.history_view.clear()
+        self._clear_chat_view()
         self._update_title()
         self._refresh_sidebar()
+
+    @Slot()
+    def _regenerate(self) -> None:
+        """Drop the last assistant reply and run the agent again."""
+        if self._worker is not None:
+            return
+        while self._session.messages and self._session.messages[-1].role == "assistant":
+            self._session.messages.pop()
+        if not self._session.messages:
+            return
+        self._save_session()
+        self._render_session()
+        self._start_worker()
+
+    @Slot()
+    def _edit_last_user(self) -> None:
+        """Edit the last user message and resend it in place."""
+        if self._worker is not None:
+            return
+        messages = self._session.messages
+        index = next(
+            (i for i in range(len(messages) - 1, -1, -1) if messages[i].role == "user"),
+            None,
+        )
+        if index is None:
+            return
+        text, ok = QInputDialog.getText(
+            self,
+            self.tr("Edit Message"),
+            self.tr("Message:"),
+            text=messages[index].content,
+        )
+        edited = text.strip()
+        if not ok or not edited or edited == messages[index].content:
+            return
+        del messages[index:]
+        self._save_session()
+        self._render_session()
+        self.input.setPlainText(edited)
+        self._send()
 
     @Slot()
     def _open_settings(self) -> None:
@@ -670,82 +620,52 @@ class ChatPanel(QWidget):
 
     @Slot(str)
     def _on_stream_text(self, delta: str) -> None:
-        """Append one streamed assistant delta to the live bubble."""
+        """Append one streamed assistant delta to the live turn."""
         if not delta:
             return
-        if self._stream_start is None:
-            cursor = self._prepare_message_block()
-            self._stream_start = cursor.position()
-            self._stream_end = cursor.position()
-            self.history_view.add_bubble(
-                self._stream_start,
-                self._stream_end,
-                self._assistant_background(),
-            )
-        else:
-            cursor = self.history_view.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(delta)
-        self._stream_end = cursor.position()
-        self._stream_parts.append(delta)
-        self.history_view.touch_bubble(self._stream_start, self._stream_end)
-        self.history_view.ensureCursorVisible()
-
-    def _finalize_stream(self, text: str | None = None) -> None:
-        """Replace the streamed plain text with rendered Markdown."""
-        start = self._stream_start
-        end = self._stream_end
-        if start is None or end is None:
-            return
-        rendered = "".join(self._stream_parts) if text is None else text
-        cursor = QTextCursor(self.history_view.document())
-        cursor.setPosition(start)
-        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-        cursor.insertMarkdown(rendered)
-        new_end = cursor.position()
-        self._style_message_blocks(
-            start,
-            new_end,
-            Qt.AlignmentFlag.AlignLeft,
-            right_margin=self._bubble_indent(),
-        )
-        self._apply_text_color(start, new_end, self._assistant_color())
-        self.history_view.touch_bubble(start, new_end)
-        self._stream_start = None
-        self._stream_end = None
-        self._stream_parts = []
-        self.history_view.ensureCursorVisible()
+        turn = self._ensure_live_turn()
+        turn.append_stream(delta)
+        self._scroll_to_bottom()
 
     @Slot(str)
     def _on_finished_ok(self, text: str) -> None:
-        if self._stream_start is not None:
-            partial = "".join(self._stream_parts)
-            self._finalize_stream()
+        turn = self._live_turn
+        self._live_turn = None
+        if turn is not None:
             if text == CANCELLED_TEXT:
-                if partial:
-                    self._append_activity(CANCELLED_TEXT)
+                if turn.markdown_text():
+                    turn.set_note(CANCELLED_TEXT)
                 return
-            if partial:
+            # Prefer what the user already saw streamed over the final text.
+            content = turn.markdown_text() or text
+            turn.finalize(content)
+            if content.strip():
                 self._session.messages.append(
-                    ChatMessage(role="assistant", content=partial)
+                    ChatMessage(role="assistant", content=content)
                 )
                 self._save_session()
+            self._update_actions()
             return
         if text and text != CANCELLED_TEXT:
             self._session.messages.append(ChatMessage(role="assistant", content=text))
             self._save_session()
         self._append_assistant(text)
+        self._update_actions()
 
     @Slot(str)
     def _on_failed(self, message: str) -> None:
-        if self._stream_start is not None:
-            self._finalize_stream()
+        turn = self._live_turn
+        if turn is not None:
+            turn.finalize()
+            self._live_turn = None
         self._append_error(message)
+        self._update_actions()
 
     @Slot()
     def _on_worker_finished(self) -> None:
-        if self._stream_start is not None:
-            self._finalize_stream()
+        if self._live_turn is not None:
+            self._live_turn.finalize()
+            self._live_turn = None
         worker = self._worker
         self._worker = None
         self._set_busy(False)
@@ -810,8 +730,11 @@ class ChatPanel(QWidget):
         self.new_button.setEnabled(not busy)
         self.history_list.setEnabled(not busy)
         self.model_button.setEnabled(not busy)
+        self.regenerate_button.setEnabled(not busy)
         self.stop_button.setEnabled(busy)
         self.status_label.setText(self.tr("Thinking...") if busy else "")
+        if not busy:
+            self._update_actions()
 
     @Slot(bool)
     def _set_collapsed(self, collapsed: bool) -> None:
@@ -845,7 +768,7 @@ class ChatPanel(QWidget):
 
     def _chat_colors(self) -> tuple[str, str, str]:
         """Theme colors for the chat: history background/foreground/accent."""
-        history = self._qss_block("QTextBrowser#ChatHistory")
+        history = self._qss_block("QScrollArea#ChatHistory")
         background = history.get("background-color", _FALLBACK_BG)
         foreground = history.get("color", _FALLBACK_FG)
         primary = self._qss_block("QPushButton#primaryButton")
@@ -884,125 +807,128 @@ class ChatPanel(QWidget):
         background, _, _ = self._chat_colors()
         return _mix_colors(background, self._error_color(), 0.18)
 
-    def _prepare_message_block(self) -> QTextCursor:
-        """Return a cursor in a fresh block ready for the next message.
+    def _chat_text(self) -> str:
+        """Plain text of every turn widget currently in the view."""
+        chunks = [
+            widget.plain_text()
+            for widget in self._turn_widgets
+            if isinstance(widget, (MessageBubble, AssistantTurn))
+        ]
+        return "\n".join(chunks)
 
-        A blank spacer block separates consecutive messages, and list
-        formatting is always cleared so a message never inherits a list
-        from the previous one.
-        """
-        cursor = self.history_view.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        document = self.history_view.document()
-        has_content = document.blockCount() > 1 or document.firstBlock().length() > 1
-        if has_content:
-            cursor.insertBlock()
-            cursor.setBlockFormat(QTextBlockFormat())
-            cursor.insertBlock()
-            cursor.setBlockFormat(QTextBlockFormat())
-        else:
-            cursor.setBlockFormat(QTextBlockFormat())
-        return cursor
+    def _clear_chat_view(self) -> None:
+        """Remove all turn widgets, keeping the trailing stretch."""
+        while self._chat_layout.count() > 1:
+            item = self._chat_layout.takeAt(0)
+            if item is None:
+                break
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._turn_widgets.clear()
+        self._live_turn = None
+        self._last_user_bubble = None
+        self._last_assistant_turn = None
+        self._update_actions()
 
-    def _bubble_indent(self) -> int:
-        """Inset that keeps each bubble inside ~70% of the view width."""
-        width = self.history_view.viewport().width()
-        return max(120, min(400, int(width * 0.3)))
+    def _add_turn_widget(self, widget: QWidget) -> None:
+        """Insert a turn widget above the trailing stretch."""
+        index = self._chat_layout.count() - 1
+        self._chat_layout.insertWidget(index, widget)
+        self._turn_widgets.append(widget)
+        self._update_bubble_actions()
+        self._scroll_to_bottom()
 
-    def _style_message_blocks(
-        self,
-        start: int,
-        end: int,
-        alignment: Qt.AlignmentFlag | None = None,
-        left_margin: int = 6,
-        right_margin: int = 6,
-    ) -> None:
-        """Set wrap limits and alignment on the non-empty blocks in [start, end].
+    def _scroll_to_bottom(self) -> None:
+        bar = self.chat_scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
-        Empty placeholder blocks (e.g. when a reply starts with a list)
-        stay unstyled so they read as natural spacing, not as stubs.
-        """
-        document = self.history_view.document()
-        block = document.findBlock(start)
-        while block.isValid() and block.position() <= end:
-            if block.length() > 1:
-                fmt = QTextBlockFormat()
-                fmt.setLeftMargin(left_margin)
-                fmt.setRightMargin(right_margin)
-                fmt.setTopMargin(0)
-                fmt.setBottomMargin(0)
-                if alignment is not None:
-                    fmt.setAlignment(alignment)
-                block_cursor = QTextCursor(document)
-                block_cursor.setPosition(block.position())
-                block_cursor.mergeBlockFormat(fmt)
-            block = block.next()
+    def _update_bubble_actions(self) -> None:
+        """Mark only the last user bubble / last reply as actionable."""
+        for widget in self._turn_widgets:
+            if isinstance(widget, MessageBubble):
+                widget.set_editable(False)
+                widget.set_regenerable(False)
+            elif isinstance(widget, AssistantTurn):
+                widget.set_regenerable(False)
+        if self._last_user_bubble is not None:
+            self._last_user_bubble.set_editable(True)
+        if self._last_assistant_turn is not None:
+            self._last_assistant_turn.set_regenerable(True)
 
-    def _apply_text_color(self, start: int, end: int, color: str) -> None:
-        """Set the foreground of every character in [start, end]."""
-        fmt = QTextCharFormat()
-        fmt.setForeground(QColor(color))
-        cursor = QTextCursor(self.history_view.document())
-        cursor.setPosition(start)
-        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
-        cursor.mergeCharFormat(fmt)
+    def _update_actions(self) -> None:
+        """Enable Regenerate only when idle with a reply to rerun."""
+        self._update_bubble_actions()
+        idle = self._worker is None
+        has_reply = any(
+            message.role == "assistant" for message in self._session.messages[-1:]
+        )
+        self.regenerate_button.setEnabled(idle and has_reply)
+
+    def _new_assistant_turn(self) -> AssistantTurn:
+        """Create a styled assistant turn wired for regenerate requests."""
+        turn = AssistantTurn(
+            self._assistant_background(),
+            self._assistant_color(),
+            self._activity_color(),
+            self._error_color(),
+        )
+        turn.regenerate_requested.connect(self._regenerate)
+        return turn
+
+    def _ensure_live_turn(self) -> AssistantTurn:
+        """The assistant turn currently streaming, created on first use."""
+        if self._live_turn is None:
+            turn = self._new_assistant_turn()
+            self._live_turn = turn
+            self._last_assistant_turn = turn
+            self._add_turn_widget(turn)
+        return self._live_turn
 
     def _append_user(self, text: str) -> None:
         if not text.strip():
             return
-        cursor = self._prepare_message_block()
-        start = cursor.position()
-        cursor.insertHtml(f"<b>{escape(text).replace(chr(10), '<br>')}</b>")
-        end = cursor.position()
-        self._style_message_blocks(
-            start,
-            end,
-            Qt.AlignmentFlag.AlignRight,
-            left_margin=self._bubble_indent(),
+        bubble = MessageBubble(
+            self._user_background(),
+            self._chat_colors()[1],
+            role="user",
+            markdown=False,
         )
-        self.history_view.add_bubble(start, end, self._user_background())
-        self.history_view.ensureCursorVisible()
+        bubble.set_plain(text)
+        bubble.edit_requested.connect(self._edit_last_user)
+        self._last_user_bubble = bubble
+        self._add_turn_widget(bubble)
 
     def _append_assistant(self, text: str) -> None:
-        """Append an assistant reply rendered from Markdown in the reply color."""
+        """Append an assistant reply rendered from Markdown."""
         if not text.strip():
             return
-        cursor = self._prepare_message_block()
-        start = cursor.position()
-        cursor.insertMarkdown(text)
-        end = cursor.position()
-        self._style_message_blocks(
-            start,
-            end,
-            Qt.AlignmentFlag.AlignLeft,
-            right_margin=self._bubble_indent(),
-        )
-        self._apply_text_color(start, end, self._assistant_color())
-        self.history_view.add_bubble(start, end, self._assistant_background())
-        self.history_view.ensureCursorVisible()
+        turn = self._new_assistant_turn()
+        turn.finalize(text)
+        self._last_assistant_turn = turn
+        self._add_turn_widget(turn)
 
     def _append_activity(self, text: str) -> None:
         if not text.strip():
             return
-        cursor = self._prepare_message_block()
-        cursor.insertHtml(
-            f'<span style="color:{self._activity_color()}; font-family:monospace;'
-            f' font-size:11px;">{escape(text)}</span>'
-        )
-        self.history_view.ensureCursorVisible()
+        turn = self._live_turn
+        if turn is None:
+            turn = self._new_assistant_turn()
+            self._add_turn_widget(turn)
+            if self._worker is not None:
+                self._live_turn = turn
+                self._last_assistant_turn = turn
+        turn.add_tool(text)
+        self._scroll_to_bottom()
 
     def _append_error(self, text: str) -> None:
         if not text.strip():
             return
-        cursor = self._prepare_message_block()
-        start = cursor.position()
-        cursor.insertHtml(escape(text).replace(chr(10), "<br>"))
-        end = cursor.position()
-        self._style_message_blocks(
-            start,
-            end,
-            Qt.AlignmentFlag.AlignLeft,
+        bubble = MessageBubble(
+            self._error_background(),
+            self._error_color(),
+            role="error",
+            markdown=False,
         )
-        self._apply_text_color(start, end, self._error_color())
-        self.history_view.add_bubble(start, end, self._error_background())
-        self.history_view.ensureCursorVisible()
+        bubble.set_plain(text)
+        self._add_turn_widget(bubble)

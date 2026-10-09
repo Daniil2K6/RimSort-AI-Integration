@@ -208,6 +208,21 @@ def _sse(payload: dict[str, Any]) -> bytes:
     return f"data: {json.dumps(payload)}".encode()
 
 
+def _run_stream(
+    lines: list[bytes], should_stop: Any = None
+) -> tuple[list[str], Any, list[dict[str, Any]]]:
+    """Stream fake SSE lines through a real client; return seen/reply/calls."""
+    post, calls = make_recorder(FakeResponse(lines=lines))
+    client = make_client(post)
+    seen: list[str] = []
+    reply = client.chat(
+        [{"role": "user", "content": "hi"}],
+        on_text=seen.append,
+        should_stop=should_stop or (lambda: False),
+    )
+    return seen, reply, calls
+
+
 def test_streaming_forwards_deltas_and_sets_stream_flag() -> None:
     """With on_text the request streams and deltas reach the callback."""
     lines = [
@@ -215,11 +230,8 @@ def test_streaming_forwards_deltas_and_sets_stream_flag() -> None:
         _sse({"choices": [{"delta": {"content": "llo"}}]}),
         b"data: [DONE]",
     ]
-    post, calls = make_recorder(FakeResponse(lines=lines))
-    client = make_client(post)
-    seen: list[str] = []
 
-    reply = client.chat([{"role": "user", "content": "hi"}], on_text=seen.append)
+    seen, reply, calls = _run_stream(lines)
 
     assert calls[0]["json"]["stream"] is True
     assert seen == ["he", "llo"]
@@ -268,10 +280,8 @@ def test_streaming_assembles_fragmented_tool_calls() -> None:
         ),
         b"data: [DONE]",
     ]
-    post, _ = make_recorder(FakeResponse(lines=lines))
-    client = make_client(post)
 
-    reply = client.chat([{"role": "user", "content": "hi"}], on_text=lambda _: None)
+    _, reply, _ = _run_stream(lines)
 
     assert reply.content == ""
     assert len(reply.tool_calls) == 1
@@ -288,15 +298,13 @@ def test_streaming_should_stop_breaks_early() -> None:
         _sse({"choices": [{"delta": {"content": "second"}}]}),
         b"data: [DONE]",
     ]
-    post, _ = make_recorder(FakeResponse(lines=lines))
-    client = make_client(post)
-    seen: list[str] = []
+    budget = [1]
 
-    reply = client.chat(
-        [{"role": "user", "content": "hi"}],
-        on_text=seen.append,
-        should_stop=lambda: len(seen) >= 1,
-    )
+    def _stop_after_first() -> bool:
+        budget[0] -= 1
+        return budget[0] < 0
+
+    seen, reply, _ = _run_stream(lines, should_stop=_stop_after_first)
 
     assert seen == ["first"]
     assert reply.content == "first"
@@ -311,11 +319,8 @@ def test_streaming_skips_malformed_chunks() -> None:
         _sse({"choices": [{"delta": {"content": "ok"}}]}),
         b"data: [DONE]",
     ]
-    post, _ = make_recorder(FakeResponse(lines=lines))
-    client = make_client(post)
-    seen: list[str] = []
 
-    reply = client.chat([{"role": "user", "content": "hi"}], on_text=seen.append)
+    seen, reply, _ = _run_stream(lines)
 
     assert seen == ["ok"]
     assert reply.content == "ok"

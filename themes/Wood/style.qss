@@ -1182,11 +1182,15 @@ QLabel#ChatTitle {
     color: #ffffff;
     font-weight: bold;
 }
-QTextBrowser#ChatHistory {
+QScrollArea#ChatHistory {
     background-color: #3b2f2f;
     color: #ffffff;
     border: 1px solid #6a5a5a;
     border-radius: 4px;
+}
+
+QScrollArea#ChatHistory > QWidget > QWidget {
+    background: transparent;
 }
 QPlainTextEdit#ChatInput {
     background-color: #4a3a3a;

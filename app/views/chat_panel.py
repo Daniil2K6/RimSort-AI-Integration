@@ -17,7 +17,13 @@ from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
 from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Slot
-from PySide6.QtGui import QColor, QKeyEvent, QTextCharFormat, QTextCursor
+from PySide6.QtGui import (
+    QColor,
+    QKeyEvent,
+    QTextBlockFormat,
+    QTextCharFormat,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -679,36 +685,142 @@ class ChatPanel(QWidget):
         return "#c01c28"
 
     # -------------------------------------------------------------- output
+    def _user_background(self) -> str:
+        """Accent-tinted bubble background for the user's own messages."""
+        background, _, accent = self._chat_colors()
+        return _mix_colors(background, accent, 0.45)
+
+    def _assistant_background(self) -> str:
+        """Subtle panel background for assistant replies."""
+        background, foreground, _ = self._chat_colors()
+        return _mix_colors(background, foreground, 0.12)
+
+    def _error_background(self) -> str:
+        background, _, _ = self._chat_colors()
+        return _mix_colors(background, self._error_color(), 0.18)
+
+    def _prepare_message_block(self) -> QTextCursor:
+        """Return a cursor in a fresh block ready for the next message.
+
+        A blank spacer block separates consecutive messages, and list
+        formatting is always cleared so a message never inherits a list
+        from the previous one.
+        """
+        cursor = self.history_view.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        document = self.history_view.document()
+        has_content = document.blockCount() > 1 or document.firstBlock().length() > 1
+        if has_content:
+            cursor.insertBlock()
+            cursor.setBlockFormat(QTextBlockFormat())
+            cursor.insertBlock()
+            cursor.setBlockFormat(QTextBlockFormat())
+        else:
+            cursor.setBlockFormat(QTextBlockFormat())
+        return cursor
+
+    def _bubble_indent(self) -> int:
+        """Inset that keeps each bubble inside ~70% of the view width."""
+        width = self.history_view.viewport().width()
+        return max(120, min(400, int(width * 0.3)))
+
+    def _style_message_blocks(
+        self,
+        start: int,
+        end: int,
+        background: str,
+        alignment: Qt.AlignmentFlag | None = None,
+        left_margin: int = 6,
+        right_margin: int = 6,
+    ) -> None:
+        """Paint ``background`` across the non-empty blocks in [start, end].
+
+        Empty placeholder blocks (e.g. when a reply starts with a list)
+        stay unstyled so they read as natural spacing, not as stubs.
+        """
+        document = self.history_view.document()
+        block = document.findBlock(start)
+        while block.isValid() and block.position() <= end:
+            if block.length() > 1:
+                fmt = QTextBlockFormat()
+                fmt.setBackground(QColor(background))
+                fmt.setLeftMargin(left_margin)
+                fmt.setRightMargin(right_margin)
+                fmt.setTopMargin(0)
+                fmt.setBottomMargin(0)
+                if alignment is not None:
+                    fmt.setAlignment(alignment)
+                block_cursor = QTextCursor(document)
+                block_cursor.setPosition(block.position())
+                block_cursor.mergeBlockFormat(fmt)
+            block = block.next()
+
     def _append_user(self, text: str) -> None:
-        self.history_view.append(
-            f'<p style="font-weight:bold;">{escape(text).replace(chr(10), "<br>")}</p>'
+        if not text.strip():
+            return
+        cursor = self._prepare_message_block()
+        start = cursor.position()
+        cursor.insertHtml(f"<b>{escape(text).replace(chr(10), '<br>')}</b>")
+        end = cursor.position()
+        self._style_message_blocks(
+            start,
+            end,
+            self._user_background(),
+            Qt.AlignmentFlag.AlignRight,
+            left_margin=self._bubble_indent(),
         )
+        self.history_view.ensureCursorVisible()
 
     def _append_assistant(self, text: str) -> None:
         """Append an assistant reply rendered from Markdown in the reply color."""
         if not text.strip():
             return
-        cursor = self.history_view.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertBlock()
+        cursor = self._prepare_message_block()
         start = cursor.position()
         cursor.insertMarkdown(text)
         end = cursor.position()
-        cursor.setPosition(start)
-        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        self._style_message_blocks(
+            start,
+            end,
+            self._assistant_background(),
+            Qt.AlignmentFlag.AlignLeft,
+            right_margin=self._bubble_indent(),
+        )
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(self._assistant_color()))
-        cursor.mergeCharFormat(fmt)
+        style_cursor = QTextCursor(self.history_view.document())
+        style_cursor.setPosition(start)
+        style_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        style_cursor.mergeCharFormat(fmt)
         self.history_view.ensureCursorVisible()
 
     def _append_activity(self, text: str) -> None:
-        self.history_view.append(
-            f'<p style="color:{self._activity_color()}; font-family:monospace;'
-            f' font-size:11px;">{escape(text)}</p>'
+        if not text.strip():
+            return
+        cursor = self._prepare_message_block()
+        cursor.insertHtml(
+            f'<span style="color:{self._activity_color()}; font-family:monospace;'
+            f' font-size:11px;">{escape(text)}</span>'
         )
+        self.history_view.ensureCursorVisible()
 
     def _append_error(self, text: str) -> None:
-        self.history_view.append(
-            f'<p style="color:{self._error_color()};">'
-            f"{escape(text).replace(chr(10), '<br>')}</p>"
+        if not text.strip():
+            return
+        cursor = self._prepare_message_block()
+        start = cursor.position()
+        cursor.insertHtml(escape(text).replace(chr(10), "<br>"))
+        end = cursor.position()
+        self._style_message_blocks(
+            start,
+            end,
+            self._error_background(),
+            Qt.AlignmentFlag.AlignLeft,
         )
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(self._error_color()))
+        style_cursor = QTextCursor(self.history_view.document())
+        style_cursor.setPosition(start)
+        style_cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        style_cursor.mergeCharFormat(fmt)
+        self.history_view.ensureCursorVisible()

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 from PySide6.QtCore import QCoreApplication, Qt
+from PySide6.QtGui import QTextBlock, QTextFormat
 from PySide6.QtWidgets import QApplication
 
 from app.ai.chat_store import ChatMessage, ChatSession
@@ -311,6 +312,86 @@ class TestChatPanelColors:
         item = chat_panel.history_list.item(0)
         assert item.data(Qt.ItemDataRole.UserRole) == chat_id
         assert item.isSelected()
+
+
+class TestChatPanelBubbles:
+    def _blocks(self, chat_panel: ChatPanel) -> list[QTextBlock]:
+        document = chat_panel.history_view.document()
+        blocks = []
+        block = document.firstBlock()
+        while block.isValid():
+            blocks.append(block)
+            block = block.next()
+        return blocks
+
+    def _find(self, chat_panel: ChatPanel, needle: str) -> QTextBlock:
+        return next(b for b in self._blocks(chat_panel) if needle in b.text())
+
+    @staticmethod
+    def _has_background(block: QTextBlock) -> bool:
+        return block.blockFormat().background().style() != Qt.BrushStyle.NoBrush
+
+    def test_user_and_assistant_bubbles_are_separate(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        """User is right-aligned with an accent bubble; assistant is left."""
+        chat_panel._append_user("мой вопрос")
+        chat_panel._append_assistant("ответ модели")
+
+        user_block = self._find(chat_panel, "мой вопрос")
+        assistant_block = self._find(chat_panel, "ответ модели")
+        user_fmt = user_block.blockFormat()
+        assistant_fmt = assistant_block.blockFormat()
+
+        assert user_fmt.alignment() == Qt.AlignmentFlag.AlignRight
+        assert assistant_fmt.alignment() == Qt.AlignmentFlag.AlignLeft
+        # Distinct, non-transparent backgrounds.
+        assert self._has_background(user_block)
+        assert self._has_background(assistant_block)
+        assert user_fmt.background().color() != assistant_fmt.background().color()
+        # Bubbles are inset from opposite edges, not full-width bands.
+        assert user_fmt.leftMargin() > user_fmt.rightMargin()
+        assert assistant_fmt.rightMargin() > assistant_fmt.leftMargin()
+
+    def test_spacer_separates_consecutive_messages(self, chat_panel: ChatPanel) -> None:
+        """A blank unstyled block sits between two messages."""
+        chat_panel._append_user("первое")
+        chat_panel._append_user("второе")
+
+        first = self._find(chat_panel, "первое")
+        second = self._find(chat_panel, "второе")
+        between = first.next()
+        assert between.text() == ""
+        assert between.position() < second.position()
+        assert not self._has_background(between)
+
+    def test_reply_after_list_does_not_inherit_bullet(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        """A plain message following a markdown list starts a fresh block."""
+        chat_panel._append_assistant("- пункт\n- ещё пункт")
+        chat_panel._append_user("обычный ответ без списка")
+
+        user_block = self._find(chat_panel, "обычный ответ без списка")
+        assert user_block.blockFormat().alignment() == Qt.AlignmentFlag.AlignRight
+        assert not user_block.blockFormat().hasProperty(QTextFormat.Property.ObjectType)
+
+    def test_error_and_activity_have_own_styles(self, chat_panel: ChatPanel) -> None:
+        """Errors get a tinted background; activity lines stay backgroundless."""
+        chat_panel._append_user("вопрос")
+        chat_panel._append_activity("загрузка...")
+        chat_panel._append_error("что-то сломалось")
+
+        activity_block = self._find(chat_panel, "загрузка")
+        error_block = self._find(chat_panel, "сломалось")
+        user_block = self._find(chat_panel, "вопрос")
+        assert not self._has_background(activity_block)
+        assert self._has_background(error_block)
+        # The error bubble must not reuse the accent-tinted user background.
+        assert (
+            error_block.blockFormat().background().color()
+            != user_block.blockFormat().background().color()
+        )
 
 
 class TestChatPanelSessionData:

@@ -51,14 +51,18 @@ class ScriptedClient:
         self._replies = list(replies)
         self.seen_messages: list[list[dict[str, Any]]] = []
         self.seen_tools: list[list[dict[str, Any]] | None] = []
+        self.seen_on_text: list[Any] = []
 
     def chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        on_text: Any = None,
+        should_stop: Any = None,
     ) -> AssistantReply:
         self.seen_messages.append(list(messages))
         self.seen_tools.append(tools)
+        self.seen_on_text.append(on_text)
         if not self._replies:
             raise AssertionError("ScriptedClient ran out of replies")
         return self._replies.pop(0)
@@ -229,6 +233,24 @@ def test_run_agent_cancelled_before_first_round(mcp_env: MCPEnv) -> None:
     assert text == CANCELLED_TEXT
     assert client.seen_messages == []
     assert messages == []
+
+
+def test_run_agent_forwards_on_text_and_should_stop(mcp_env: MCPEnv) -> None:
+    """Streaming callbacks are passed down to every client.chat call."""
+    client = ScriptedClient([AssistantReply(content="готово")])
+    seen: list[str] = []
+    text = run_agent(
+        client=client,
+        server=build_server(mcp_env.ctx),
+        messages=[{"role": "user", "content": "hi"}],
+        confirm=lambda pretty: True,
+        emit=lambda line: None,
+        is_cancelled=lambda: False,
+        on_text=seen.append,
+    )
+    assert text == "готово"
+    assert len(client.seen_on_text) == 1
+    assert client.seen_on_text[0] == seen.append
 
 
 def test_run_agent_stops_at_round_limit_and_summarises(mcp_env: MCPEnv) -> None:

@@ -10,6 +10,7 @@ from PySide6.QtCore import QCoreApplication, Qt
 from PySide6.QtGui import QTextBlock, QTextFormat
 from PySide6.QtWidgets import QApplication
 
+from app.ai.agent import CANCELLED_TEXT
 from app.ai.chat_store import ChatMessage, ChatSession
 from app.ai.providers import new_provider
 from app.models.settings import Settings
@@ -125,6 +126,7 @@ class TestChatPanelSessions:
         class _FakeWorker:
             def __init__(self, **kwargs: Any) -> None:
                 self.activity = MagicMock()
+                self.stream_text = MagicMock()
                 self.confirm_requested = MagicMock()
                 self.finished_ok = MagicMock()
                 self.failed = MagicMock()
@@ -435,6 +437,55 @@ class TestChatPanelBubbles:
         assert not self._covers(chat_panel, activity_block.position())
         # The error bubble must not reuse the accent-tinted user background.
         assert bubbles[0][2] != bubbles[1][2]
+
+
+class TestChatPanelStreaming:
+    def test_stream_deltas_render_as_markdown_reply(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        """Live deltas appear immediately; finish re-renders them as Markdown."""
+        chat_panel._on_stream_text("сначала ")
+        chat_panel._on_stream_text("plain, потом ")
+        assert "сначала plain, потом" in chat_panel.history_view.toPlainText()
+        assert len(chat_panel.history_view.bubbles) == 1
+
+        chat_panel._on_stream_text("**жирный** финал")
+        chat_panel._on_finished_ok("**жирный** финал")
+
+        text = chat_panel.history_view.toPlainText()
+        assert "**жирный**" not in text  # markdown was rendered, not raw
+        assert "жирный финал" in text
+        html = chat_panel.history_view.toHtml()
+        assert "font-weight:700" in html.replace(" ", "")
+        # The streamed text is what gets persisted.
+        saved = chat_panel._session.messages[-1]
+        assert saved.role == "assistant"
+        assert saved.content.startswith("сначала plain")
+        # One bubble still covers the whole reply.
+        assert len(chat_panel.history_view.bubbles) == 1
+
+    def test_stream_cancel_keeps_partial_and_skips_save(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        """Stopping mid-stream keeps the partial text and saves nothing."""
+        chat_panel._on_stream_text("частичный ответ")
+        chat_panel._on_finished_ok(CANCELLED_TEXT)
+
+        assert "частичный ответ" in chat_panel.history_view.toPlainText()
+        assert all(m.role != "assistant" for m in chat_panel._session.messages)
+        assert "Generation stopped." in chat_panel.history_view.toPlainText()
+
+    def test_stream_failure_keeps_partial_and_reports_error(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        """A mid-stream failure keeps the text and appends the error."""
+        chat_panel._on_stream_text("до ошибки")
+        chat_panel._on_failed("сбой связи")
+
+        text = chat_panel.history_view.toPlainText()
+        assert "до ошибки" in text
+        assert "сбой связи" in text
+        assert chat_panel._stream_start is None
 
 
 class TestChatPanelSessionData:

@@ -2,7 +2,9 @@
 
 Uses `requests` (already a RimSort dependency) against
 `{base_url}/chat/completions`. The POST function is injectable so tests
-can stub the network without monkeypatching `requests`.
+can stub the network without monkeypatching `requests`. When an
+`on_text` callback is supplied the request is made with `stream: true`
+and content deltas are forwarded to the callback as they arrive (SSE).
 """
 
 from __future__ import annotations
@@ -47,6 +49,8 @@ class ChatClient(Protocol):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        on_text: Callable[[str], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> AssistantReply: ...
 
 
@@ -71,11 +75,19 @@ class AIClient:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
+        on_text: Callable[[str], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
     ) -> AssistantReply:
-        """Send one chat completion request and return the parsed message."""
+        """Send one chat completion request and return the parsed message.
+
+        With `on_text` the request streams: each content delta is passed to
+        the callback immediately and the full reply is still returned.
+        """
         payload: dict[str, Any] = {"model": self._model, "messages": messages}
         if tools:
             payload["tools"] = tools
+        if on_text is not None:
+            payload["stream"] = True
         headers = {"Content-Type": "application/json"}
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
@@ -89,6 +101,8 @@ class AIClient:
         status = getattr(response, "status_code", 0)
         if status != 200:
             raise AIError(_format_http_error(status, response))
+        if on_text is not None:
+            return _parse_stream(response, on_text, should_stop)
         try:
             data = response.json()
         except ValueError as exc:
@@ -111,6 +125,94 @@ def _format_http_error(status: int, response: Any) -> str:
     if status == 429:
         return f"AI endpoint rate limit hit (HTTP {status}).{detail}"
     return f"AI endpoint error (HTTP {status}).{detail}"
+
+
+def _parse_stream(
+    response: Any,
+    on_text: Callable[[str], None],
+    should_stop: Callable[[], bool] | None,
+) -> AssistantReply:
+    """Consume an SSE stream, forwarding content deltas to `on_text`."""
+    parts: list[str] = []
+    tool_acc: dict[int, dict[str, str]] = {}
+    try:
+        for raw in response.iter_lines():
+            if should_stop is not None and should_stop():
+                break
+            if not raw:
+                continue
+            line = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw
+            if not line.startswith("data:"):
+                continue
+            data = line[len("data:") :].strip()
+            if data == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(chunk, dict):
+                continue
+            choices = chunk.get("choices")
+            if not isinstance(choices, list) or not choices:
+                continue
+            first = choices[0]
+            if not isinstance(first, dict):
+                continue
+            delta = first.get("delta")
+            if not isinstance(delta, dict):
+                continue
+            text = delta.get("content")
+            if isinstance(text, str) and text:
+                parts.append(text)
+                on_text(text)
+            _accumulate_tool_calls(tool_acc, delta.get("tool_calls"))
+    except (requests.RequestException, OSError) as exc:
+        raise AIError(f"AI stream interrupted: {exc}") from exc
+    return AssistantReply(
+        content="".join(parts), tool_calls=_finish_tool_calls(tool_acc)
+    )
+
+
+def _accumulate_tool_calls(acc: dict[int, dict[str, str]], raw_calls: Any) -> None:
+    """Merge one SSE delta's partial tool-call fragments into `acc`."""
+    if not isinstance(raw_calls, list):
+        return
+    for raw in raw_calls:
+        if not isinstance(raw, dict):
+            continue
+        index = raw.get("index")
+        slot = acc.setdefault(
+            int(index) if isinstance(index, int) else 0,
+            {"id": "", "name": "", "arguments": ""},
+        )
+        call_id = raw.get("id")
+        if isinstance(call_id, str) and call_id:
+            slot["id"] = call_id
+        function = raw.get("function")
+        if isinstance(function, dict):
+            name = function.get("name")
+            if isinstance(name, str) and name:
+                slot["name"] = name
+            arguments = function.get("arguments")
+            if isinstance(arguments, str) and arguments:
+                slot["arguments"] += arguments
+
+
+def _finish_tool_calls(acc: dict[int, dict[str, str]]) -> list[ToolCall]:
+    calls: list[ToolCall] = []
+    for index in sorted(acc):
+        slot = acc[index]
+        if not slot["name"]:
+            continue
+        calls.append(
+            ToolCall(
+                id=slot["id"] or f"call_{index}",
+                name=slot["name"],
+                arguments=_parse_arguments(slot["arguments"]),
+            )
+        )
+    return calls
 
 
 def _parse_reply(data: dict[str, Any]) -> AssistantReply:

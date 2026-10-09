@@ -131,6 +131,18 @@ class ChatHistoryView(QTextBrowser):
         self._bubbles.append((start, end, QColor(color)))
         self.viewport().update()
 
+    def touch_bubble(self, start: int, end: int) -> None:
+        """Update the end position of the bubble registered at ``start``.
+
+        Used while streaming: the assistant bubble grows as text arrives.
+        """
+        for index, (bubble_start, _, color) in enumerate(self._bubbles):
+            if bubble_start == start:
+                self._bubbles[index] = (start, end, color)
+                self.viewport().update()
+                return
+        self.viewport().update()
+
     def clear(self) -> None:
         self._bubbles.clear()
         super().clear()
@@ -219,6 +231,9 @@ class ChatPanel(QWidget):
         self._server_lock = threading.Lock()
         self._collapsed = False
         self._model_submenus: list[QMenu] = []
+        self._stream_start: int | None = None
+        self._stream_end: int | None = None
+        self._stream_parts: list[str] = []
 
         ensure_providers(self.settings)
         self._build_ui()
@@ -626,6 +641,7 @@ class ChatPanel(QWidget):
             messages=api_messages,
         )
         worker.activity.connect(self._append_activity)
+        worker.stream_text.connect(self._on_stream_text)
         worker.confirm_requested.connect(self._on_confirm_requested)
         worker.finished_ok.connect(self._on_finished_ok)
         worker.failed.connect(self._on_failed)
@@ -653,7 +669,68 @@ class ChatPanel(QWidget):
         self._show_settings_dialog("AI Assistant")
 
     @Slot(str)
+    def _on_stream_text(self, delta: str) -> None:
+        """Append one streamed assistant delta to the live bubble."""
+        if not delta:
+            return
+        if self._stream_start is None:
+            cursor = self._prepare_message_block()
+            self._stream_start = cursor.position()
+            self._stream_end = cursor.position()
+            self.history_view.add_bubble(
+                self._stream_start,
+                self._stream_end,
+                self._assistant_background(),
+            )
+        else:
+            cursor = self.history_view.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor.insertText(delta)
+        self._stream_end = cursor.position()
+        self._stream_parts.append(delta)
+        self.history_view.touch_bubble(self._stream_start, self._stream_end)
+        self.history_view.ensureCursorVisible()
+
+    def _finalize_stream(self, text: str | None = None) -> None:
+        """Replace the streamed plain text with rendered Markdown."""
+        start = self._stream_start
+        end = self._stream_end
+        if start is None or end is None:
+            return
+        rendered = "".join(self._stream_parts) if text is None else text
+        cursor = QTextCursor(self.history_view.document())
+        cursor.setPosition(start)
+        cursor.setPosition(end, QTextCursor.MoveMode.KeepAnchor)
+        cursor.insertMarkdown(rendered)
+        new_end = cursor.position()
+        self._style_message_blocks(
+            start,
+            new_end,
+            Qt.AlignmentFlag.AlignLeft,
+            right_margin=self._bubble_indent(),
+        )
+        self._apply_text_color(start, new_end, self._assistant_color())
+        self.history_view.touch_bubble(start, new_end)
+        self._stream_start = None
+        self._stream_end = None
+        self._stream_parts = []
+        self.history_view.ensureCursorVisible()
+
+    @Slot(str)
     def _on_finished_ok(self, text: str) -> None:
+        if self._stream_start is not None:
+            partial = "".join(self._stream_parts)
+            self._finalize_stream()
+            if text == CANCELLED_TEXT:
+                if partial:
+                    self._append_activity(CANCELLED_TEXT)
+                return
+            if partial:
+                self._session.messages.append(
+                    ChatMessage(role="assistant", content=partial)
+                )
+                self._save_session()
+            return
         if text and text != CANCELLED_TEXT:
             self._session.messages.append(ChatMessage(role="assistant", content=text))
             self._save_session()
@@ -661,10 +738,14 @@ class ChatPanel(QWidget):
 
     @Slot(str)
     def _on_failed(self, message: str) -> None:
+        if self._stream_start is not None:
+            self._finalize_stream()
         self._append_error(message)
 
     @Slot()
     def _on_worker_finished(self) -> None:
+        if self._stream_start is not None:
+            self._finalize_stream()
         worker = self._worker
         self._worker = None
         self._set_busy(False)

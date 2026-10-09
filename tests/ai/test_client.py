@@ -26,16 +26,21 @@ class FakeResponse:
         data: Any = None,
         text: str = "",
         bad_json: bool = False,
+        lines: list[bytes] | None = None,
     ) -> None:
         self.status_code = status_code
         self.data = data
         self.text = text
         self.bad_json = bad_json
+        self.lines = lines or []
 
     def json(self) -> Any:
         if self.bad_json:
             raise ValueError("not json")
         return self.data
+
+    def iter_lines(self) -> list[bytes]:
+        return self.lines
 
 
 def make_recorder(
@@ -197,3 +202,120 @@ def test_tool_call_arguments_accept_dict_or_string() -> None:
     assert _parse_arguments("[oops") == {}
     assert _parse_arguments(None) == {}
     assert json.dumps(_parse_arguments('{"a": "б"}')) == '{"a": "\\u0431"}'
+
+
+def _sse(payload: dict[str, Any]) -> bytes:
+    return f"data: {json.dumps(payload)}".encode()
+
+
+def test_streaming_forwards_deltas_and_sets_stream_flag() -> None:
+    """With on_text the request streams and deltas reach the callback."""
+    lines = [
+        _sse({"choices": [{"delta": {"content": "he"}}]}),
+        _sse({"choices": [{"delta": {"content": "llo"}}]}),
+        b"data: [DONE]",
+    ]
+    post, calls = make_recorder(FakeResponse(lines=lines))
+    client = make_client(post)
+    seen: list[str] = []
+
+    reply = client.chat([{"role": "user", "content": "hi"}], on_text=seen.append)
+
+    assert calls[0]["json"]["stream"] is True
+    assert seen == ["he", "llo"]
+    assert reply.content == "hello"
+    assert reply.tool_calls == []
+
+
+def test_streaming_assembles_fragmented_tool_calls() -> None:
+    """Tool-call argument fragments are concatenated across SSE chunks."""
+    lines = [
+        _sse(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_1",
+                                    "function": {
+                                        "name": "list_mods",
+                                        "arguments": '{"query":',
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+        _sse(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "function": {"arguments": '"ce"}'},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+        b"data: [DONE]",
+    ]
+    post, _ = make_recorder(FakeResponse(lines=lines))
+    client = make_client(post)
+
+    reply = client.chat([{"role": "user", "content": "hi"}], on_text=lambda _: None)
+
+    assert reply.content == ""
+    assert len(reply.tool_calls) == 1
+    call = reply.tool_calls[0]
+    assert call.id == "call_1"
+    assert call.name == "list_mods"
+    assert call.arguments == {"query": "ce"}
+
+
+def test_streaming_should_stop_breaks_early() -> None:
+    """should_stop aborts the stream between chunks."""
+    lines = [
+        _sse({"choices": [{"delta": {"content": "first"}}]}),
+        _sse({"choices": [{"delta": {"content": "second"}}]}),
+        b"data: [DONE]",
+    ]
+    post, _ = make_recorder(FakeResponse(lines=lines))
+    client = make_client(post)
+    seen: list[str] = []
+
+    reply = client.chat(
+        [{"role": "user", "content": "hi"}],
+        on_text=seen.append,
+        should_stop=lambda: len(seen) >= 1,
+    )
+
+    assert seen == ["first"]
+    assert reply.content == "first"
+
+
+def test_streaming_skips_malformed_chunks() -> None:
+    """Malformed SSE lines never break the stream."""
+    lines = [
+        b"data: {not json",
+        b"event: ping",
+        _sse({"choices": []}),
+        _sse({"choices": [{"delta": {"content": "ok"}}]}),
+        b"data: [DONE]",
+    ]
+    post, _ = make_recorder(FakeResponse(lines=lines))
+    client = make_client(post)
+    seen: list[str] = []
+
+    reply = client.chat([{"role": "user", "content": "hi"}], on_text=seen.append)
+
+    assert seen == ["ok"]
+    assert reply.content == "ok"

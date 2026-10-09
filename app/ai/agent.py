@@ -134,18 +134,23 @@ def run_agent(
     confirm: Callable[[str], bool],
     emit: Callable[[str], None],
     is_cancelled: Callable[[], bool],
+    on_text: Callable[[str], None] | None = None,
     max_rounds: int = MAX_ROUNDS,
 ) -> str:
     """Run the chat loop until the model stops asking for tools.
 
     Returns the final assistant text. `messages` is extended in place so
-    the chat panel can reuse the full transcript on the next turn.
+    the chat panel can reuse the full transcript on the next turn. When
+    `on_text` is given, the client streams and every content delta is
+    forwarded to it as it arrives.
     """
     tools = build_agent_tools(server)
     for _ in range(max_rounds):
         if is_cancelled():
             return CANCELLED_TEXT
-        reply = client.chat(messages, tools=tools)
+        reply = client.chat(
+            messages, tools=tools, on_text=on_text, should_stop=is_cancelled
+        )
         if not reply.tool_calls:
             text = reply.content
             messages.append({"role": "assistant", "content": text})
@@ -167,7 +172,7 @@ def run_agent(
                 }
             )
     # Out of rounds: ask once more without tools so the model can summarise.
-    reply = client.chat(messages, tools=None)
+    reply = client.chat(messages, tools=None, on_text=on_text, should_stop=is_cancelled)
     text = reply.content
     messages.append({"role": "assistant", "content": text})
     return text
@@ -222,6 +227,7 @@ class AgentWorker(QThread):
     """
 
     activity = Signal(str)
+    stream_text = Signal(str)
     confirm_requested = Signal(str)
     finished_ok = Signal(str)
     failed = Signal(str)
@@ -261,6 +267,7 @@ class AgentWorker(QThread):
                 confirm=self._confirm,
                 emit=self.activity.emit,
                 is_cancelled=self._cancel.is_set,
+                on_text=self.stream_text.emit,
             )
         except AIError as exc:
             logger.warning("AI chat request failed: {}", exc)

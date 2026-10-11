@@ -18,8 +18,14 @@ EXPECTED_TOOLS = {
     "check_workshop_updates",
     "delete_mod",
     "get_active_modlist",
+    "get_gui_state",
     "get_mod_details",
     "get_status",
+    "gui_invoke_action",
+    "gui_navigate",
+    "gui_open_workshop_item",
+    "gui_select_mod",
+    "gui_set_mod_filter",
     "import_modlist",
     "launch_game",
     "list_game_saves",
@@ -51,6 +57,25 @@ def test_tool_surface(mcp_env: MCPEnv) -> None:
     server = build_server(mcp_env.ctx)
     tools = asyncio.run(server.list_tools())
     assert {tool.name for tool in tools} == EXPECTED_TOOLS
+
+
+def test_gui_tools_unavailable_headless(mcp_env: MCPEnv) -> None:
+    """Without a bridge (external stdio server) every gui_* tool is unavailable."""
+    server = build_server(mcp_env.ctx)  # no bridge -> headless
+    cases = [
+        ("get_gui_state", {}),
+        ("gui_navigate", {"target": "mods_tab"}),
+        ("gui_select_mod", {"package_id": "ludeon.rimworld"}),
+        ("gui_set_mod_filter", {"query": "ce"}),
+        ("gui_open_workshop_item", {"publishedfileid": "123456"}),
+        ("gui_invoke_action", {"action_id": "open_settings"}),
+    ]
+    for name, args in cases:
+        payload = call(server, name, args)
+        assert payload["ok"] is False, name
+        assert payload["code"] == "gui_unavailable", name
+        # Domain tools keep working: the reply mentions they still do.
+        assert "domain tools still work" in payload["error"]
 
 
 def test_get_status(mcp_env: MCPEnv) -> None:

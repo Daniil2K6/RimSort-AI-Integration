@@ -67,6 +67,10 @@ class Settings(QObject):
         # "" -> use the built-in default prompt (see app.ai.prompt)
         self.ai_system_prompt: str = ""
         self.ai_chat_visible: bool = True
+        # Stage B/C: auto-scroll the action journal + highlight the surface a
+        # gui_* action targets.
+        self.ai_chat_follow_actions: bool = True
+        self.ai_chat_highlight: bool = True
 
         # Databases
         self.external_steam_metadata_source: str = "Configured URL"

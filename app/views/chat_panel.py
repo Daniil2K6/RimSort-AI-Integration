@@ -57,6 +57,7 @@ from app.windows.ai_provider_dialog import AIProviderDialog, prompt_add_provider
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
 
+    from app.ai.gui_bridge import GuiActionBridge
     from app.mcp.context import MCPContext
 
 _FALLBACK_BG = "#ffffff"
@@ -119,10 +120,12 @@ class ChatPanel(QWidget):
         settings: Settings,
         show_settings_dialog: Callable[..., None],
         parent: QWidget | None = None,
+        gui_bridge: GuiActionBridge | None = None,
     ) -> None:
         super().__init__(parent)
         self.settings = settings
         self._show_settings_dialog = show_settings_dialog
+        self._gui_bridge = gui_bridge
         self._store = ChatStore()
         self._session: ChatSession = self._store.new_session()
         self._worker: AgentWorker | None = None
@@ -143,9 +146,11 @@ class ChatPanel(QWidget):
         self._stream_timer.timeout.connect(self._flush_stream_turn)
         self._active_run_id: str | None = None
         self._tool_started_at: dict[str, float] = {}
-        # "Follow AI actions" / "Highlight action target" (Stage B).
-        self._follow_actions = True
-        self._highlight_target = True
+        # "Follow AI actions" / "Highlight action target" (Stage B/C).
+        self._follow_actions = bool(
+            getattr(self.settings, "ai_chat_follow_actions", True)
+        )
+        self._highlight_target = bool(getattr(self.settings, "ai_chat_highlight", True))
 
         ensure_providers(self.settings)
         self._build_ui()
@@ -289,6 +294,14 @@ class ChatPanel(QWidget):
         if self._collapsed:
             self.collapse_button.setChecked(False)
         self.input.setFocus()
+
+    def set_follow_actions(self, enabled: bool) -> None:
+        """Auto-scroll the action journal to new events (Stage B)."""
+        self._follow_actions = enabled
+
+    def set_highlight_target(self, enabled: bool) -> None:
+        """Highlight the surface a GUI action targets (Stage C)."""
+        self._highlight_target = enabled
 
     def shutdown(self) -> None:
         """Persist the current chat and stop any worker before teardown."""
@@ -822,7 +835,7 @@ class ChatPanel(QWidget):
                 ctx = MCPContext()
                 self._ctx = ctx
             if self._server is None:
-                self._server = build_server(ctx)
+                self._server = build_server(ctx, self._gui_bridge)
                 self._dirty = True
             if self._dirty:
                 try:

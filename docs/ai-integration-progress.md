@@ -10,7 +10,7 @@ lands.
 |-------|-------|--------|
 | A | Real streaming + correct cancellation | **Done** |
 | B | Structured events + live action journal | **Done** |
-| C | GUI action bridge + stable ID registry | Pending |
+| C | GUI action bridge + stable ID registry | **Done** |
 | D | Working/saved mod-list state + preview/apply | Pending |
 | E | Batch/dependency/conflict/log MCP tools | Pending |
 | F | Token economy (prompt/session/context budget) | Pending |
@@ -93,7 +93,39 @@ identical calls, stale-run filtering, duration, and follow-off behaviour.
 
 ## Stage C — GUI action bridge + stable ID registry
 
-Pending.
+Done. The agent can now drive the live RimSort UI through a validated,
+main-thread bridge; it never touches widgets directly.
+
+- `app/ai/gui_bridge.py`: `GuiActionBridge` (lives in the Qt main thread) +
+  `SurfaceId` stable-ID registry + `INVOKE_ALLOWLIST`. A worker thread submits
+  a semantic command; the bridge queues it to the GUI thread and waits on a
+  `threading.Event` with a timeout (never `BlockingQueuedConnection`). Called
+  from the GUI thread it dispatches inline, so tests do not deadlock. Result is
+  a real acknowledgement (`ok`, `action`, surface state) or a structured error
+  (`gui_unavailable` / `gui_unknown_action` / `gui_invalid_url` /
+  `gui_timeout` / `gui_error`).
+- Validation: Workshop tool accepts only numeric `publishedfileid` (canonical
+  `https://steamcommunity.com/...?id=N`); `gui_invoke_action` is allowlist-only
+  (open_settings / refresh_mods / clear_chat / toggle_ai_chat); `set_filter`
+  list name and `select_mod` package_id are checked. No DOM click, no JS from
+  the model, no OS mouse, no shell.
+- `app/mcp/gui.py`: six GUI tools (`get_gui_state`, `gui_navigate`,
+  `gui_select_mod`, `gui_set_mod_filter`, `gui_open_workshop_item`,
+  `gui_invoke_action`) registered on the MCP server. With no bridge (external
+  stdio / headless) every one answers `gui_unavailable`; domain tools keep
+  working.
+- Real executors in `MainWindow` (`_build_gui_bridge`): tab navigation via the
+  real `QTabWidget`, mod selection by `packageId` in the real list model
+  (scroll + focus + a temporary themed frame highlight), filter via the existing
+  search `QLineEdit`, Workshop via the existing SteamBrowser, and allowlisted
+  actions via existing buttons/signals. Targets come from the stable `SurfaceId`
+  table — never translated labels or coordinates.
+- Settings `ai_chat_follow_actions` / `ai_chat_highlight` added; the panel reads
+  them as defaults. (A settings-dialog UI for these toggles is still pending.)
+
+Verified: ruff/format/mypy clean; full suite 1654 passed / 1 skipped; jscpd 0
+clones. New tests cover bridge dispatch/validation/timeout/cross-thread, the
+SurfaceId table, and headless `gui_unavailable` for every GUI tool.
 
 ## Stage D — Working/saved mod-list state + preview/apply
 

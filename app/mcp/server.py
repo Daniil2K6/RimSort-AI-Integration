@@ -6,6 +6,7 @@ stdout is reserved for the MCP protocol; all logging goes to stderr.
 from __future__ import annotations
 
 import sys
+from typing import TYPE_CHECKING
 
 from loguru import logger
 from mcp.server.mcpserver import MCPServer
@@ -13,6 +14,10 @@ from mcp.server.mcpserver import MCPServer
 from app.mcp.context import MCPContext, MCPContextError
 from app.mcp.tools import register_tools
 from app.utils.app_info import AppInfo
+
+if TYPE_CHECKING:
+    from app.ai.gui_bridge import GuiActionBridge
+
 
 INSTRUCTIONS = (
     "RimSort manages RimWorld mod lists for the current instance. "
@@ -28,14 +33,18 @@ INSTRUCTIONS = (
 )
 
 
-def build_server(ctx: MCPContext) -> MCPServer:
-    """Create the MCPServer with all RimSort tools registered."""
+def build_server(ctx: MCPContext, bridge: GuiActionBridge | None = None) -> MCPServer:
+    """Create the MCPServer with all RimSort tools registered.
+
+    ``bridge`` enables the gui_* tools that drive the live UI; without it they
+    answer gui_unavailable (headless / external stdio server).
+    """
     server = MCPServer(
         name="rimsort",
         instructions=INSTRUCTIONS,
         version=AppInfo().app_version,
     )
-    register_tools(server, ctx)
+    register_tools(server, ctx, bridge)
     return server
 
 

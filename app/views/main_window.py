@@ -1,7 +1,7 @@
 import os
 from collections.abc import Callable
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.views.settings_dialog import SettingsDialog
@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.ai.gui_bridge import INVOKE_ALLOWLIST, GuiActionBridge, SurfaceId
 from app.controllers.file_search_controller import FileSearchController
 from app.controllers.instance_controller import InstanceController
 from app.controllers.main_content_controller import MainContentController
@@ -227,9 +228,11 @@ class MainWindow(QMainWindow):
         # Built-in AI assistant chat (collapsible dock on the right)
         self.ai_chat_dock = QDockWidget(self.tr("AI Assistant"), self)
         self.ai_chat_dock.setObjectName("AIAssistantDock")
+        self.gui_bridge = self._build_gui_bridge()
         self.chat_panel = ChatPanel(
             settings=self.settings,
             show_settings_dialog=self._show_settings_dialog,
+            gui_bridge=self.gui_bridge,
         )
         self.ai_chat_dock.setWidget(self.chat_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.ai_chat_dock)
@@ -322,6 +325,150 @@ class MainWindow(QMainWindow):
         self.ai_chat_dock.show()
         self.ai_chat_dock.raise_()
         self.chat_panel.focus_input()
+
+    # ---- GUI action bridge (Stage C) ------------------------------------
+    def _build_gui_bridge(self) -> GuiActionBridge:
+        """Create the main-thread bridge that lets the agent drive the UI."""
+        bridge = GuiActionBridge(self)
+
+        bridge.register_executor("get_state", self._gui_get_state)
+        bridge.register_executor("navigate", self._gui_navigate)
+        bridge.register_executor("select_mod", self._gui_select_mod)
+        bridge.register_executor("set_filter", self._gui_set_filter)
+        bridge.register_executor("open_workshop_item", self._gui_open_workshop_item)
+        bridge.register_executor("invoke_action", self._gui_invoke_action)
+
+        bridge.set_capabilities(
+            targets=[
+                SurfaceId.MODS_TAB.value,
+                SurfaceId.PLAYER_LOG_TAB.value,
+                SurfaceId.ACF_LOG_TAB.value,
+                SurfaceId.FILE_SEARCH_TAB.value,
+                SurfaceId.TROUBLESHOOTING_TAB.value,
+            ],
+            actions=sorted(INVOKE_ALLOWLIST),
+        )
+        return bridge
+
+    def _gui_tab_widget_for(self, target: str) -> QWidget | None:
+        """Map a stable SurfaceId to its real tab widget (no label matching)."""
+        return {
+            SurfaceId.MODS_TAB.value: self.main_content_tab,
+            SurfaceId.PLAYER_LOG_TAB.value: self.player_log_widget,
+            SurfaceId.ACF_LOG_TAB.value: self.acf_log_reader_tab,
+            SurfaceId.FILE_SEARCH_TAB.value: self.file_search_tab,
+            SurfaceId.TROUBLESHOOTING_TAB.value: self.troubleshooting_tab,
+        }.get(target)
+
+    def _gui_navigate(self, params: dict[str, Any]) -> dict[str, Any]:
+        target = str(params.get("target", ""))
+        widget = self._gui_tab_widget_for(target)
+        if widget is None:
+            return {"ok": False, "code": "gui_unknown_target", "error": target}
+        index = self.tab_widget.indexOf(widget)
+        if index < 0:
+            return {"ok": False, "code": "gui_unknown_target", "error": target}
+        self.tab_widget.setCurrentIndex(index)
+        return {"target": target, "visible_tab": self.tab_widget.tabText(index)}
+
+    def _gui_find_mod_item(self, package_id: str) -> tuple[Any, Any]:
+        """Locate the list item whose UserRole packageid matches, else None."""
+        for mod_list in (
+            self.main_content_panel.mods_panel.active_mods_list,
+            self.main_content_panel.mods_panel.inactive_mods_list,
+        ):
+            for row in range(mod_list.count()):
+                item = mod_list.item(row)
+                if item is None:
+                    continue
+                data = item.data(Qt.ItemDataRole.UserRole)
+                if isinstance(data, dict) and data.get("packageid") == package_id:
+                    return mod_list, item
+        return None, None
+
+    def _gui_select_mod(self, params: dict[str, Any]) -> dict[str, Any]:
+        package_id = str(params.get("package_id", ""))
+        reveal = bool(params.get("reveal", True))
+        if reveal:
+            self._gui_navigate({"target": SurfaceId.MODS_TAB.value})
+        mod_list, item = self._gui_find_mod_item(package_id)
+        if item is None:
+            return {
+                "ok": False,
+                "code": "gui_mod_not_found",
+                "error": package_id,
+            }
+        mod_list.setCurrentItem(item)
+        mod_list.scrollToItem(item)
+        mod_list.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._gui_highlight_list(mod_list)
+        return {
+            "selected": package_id,
+            "list": "active"
+            if mod_list is self.main_content_panel.mods_panel.active_mods_list
+            else "inactive",
+        }
+
+    def _gui_highlight_list(self, mod_list: Any) -> None:
+        """Temporarily frame a mod list so the agent's target is visible.
+
+        Uses a themed palette highlight border and reverts after a short
+        delay — a temporary overlay, never the system cursor.
+        """
+        if not self.settings.ai_chat_highlight:
+            return
+        mod_list.setStyleSheet("QListWidget { border: 2px solid palette(highlight); }")
+        QTimer.singleShot(1200, lambda: mod_list.setStyleSheet(""))
+
+    def _gui_set_filter(self, params: dict[str, Any]) -> dict[str, Any]:
+        query = str(params.get("query", ""))
+        list_name = str(params.get("list", "inactive"))
+        panel = self.main_content_panel.mods_panel
+        if list_name == "active":
+            search = panel.active_mods_search
+            mod_list = panel.active_mods_list
+        else:
+            search = panel.inactive_mods_search
+            mod_list = panel.inactive_mods_list
+        search.setText(query)
+        return {"list": list_name, "query": query, "visible": mod_list.count()}
+
+    def _gui_open_workshop_item(self, params: dict[str, Any]) -> dict[str, Any]:
+        url = str(params.get("url", ""))
+        self.main_content_panel._do_browse_workshop_url(url)
+        return {"opened": url}
+
+    def _gui_invoke_action(self, params: dict[str, Any]) -> dict[str, Any]:
+        action_id = str(params.get("action_id", ""))
+        if action_id == "open_settings":
+            self._show_settings_dialog()
+        elif action_id == "refresh_mods":
+            EventBus().do_refresh_mods_lists.emit()
+        elif action_id == "clear_chat":
+            self.chat_panel.clear_button.click()
+        elif action_id == "toggle_ai_chat":
+            self.ai_chat_dock.setVisible(self.ai_chat_dock.isHidden())
+        return {"acted": action_id}
+
+    def _gui_get_state(self, params: dict[str, Any]) -> dict[str, Any]:
+        panel = self.main_content_panel.mods_panel
+        active = panel.active_mods_list
+        inactive = panel.inactive_mods_list
+        current = self.tab_widget.currentIndex()
+        selected_item = active.currentItem() or inactive.currentItem()
+        selected_pkg = None
+        if selected_item is not None:
+            data = selected_item.data(Qt.ItemDataRole.UserRole)
+            if isinstance(data, dict):
+                selected_pkg = data.get("packageid")
+        return {
+            "visible_tab": self.tab_widget.tabText(current),
+            "active_count": active.count(),
+            "inactive_count": inactive.count(),
+            "active_filter": panel.active_mods_search.text(),
+            "inactive_filter": panel.inactive_mods_search.text(),
+            "selected_package_id": selected_pkg,
+        }
 
     @Slot(bool)
     def _on_ai_chat_button_clicked(self, checked: bool) -> None:

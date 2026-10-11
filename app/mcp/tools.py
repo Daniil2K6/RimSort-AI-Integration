@@ -7,15 +7,20 @@ client receives ``is_error=True`` with a readable message.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from app.mcp import launcher, modops, updates
 from app.mcp.context import MCPContext
+from app.mcp.gui import register_gui_tools
 from app.models.metadata.metadata_structure import AboutXmlMod
 from app.utils.app_info import AppInfo
+
+if TYPE_CHECKING:
+    from app.ai.gui_bridge import GuiActionBridge
+
 
 _DESCRIPTION_LIMIT = 1200
 _DEFAULT_LIST_LIMIT = 100
@@ -28,8 +33,15 @@ def _truncate(text: str, limit: int = _DESCRIPTION_LIMIT) -> str:
     return text[:limit] + "… [truncated]"
 
 
-def register_tools(mcp: MCPServer, ctx: MCPContext) -> None:
-    """Attach all RimSort tools, resources and prompts to ``mcp``."""
+def register_tools(
+    mcp: MCPServer, ctx: MCPContext, bridge: GuiActionBridge | None = None
+) -> None:
+    """Attach all RimSort tools, resources and prompts to ``mcp``.
+
+    ``bridge`` (when given) enables the gui_* tools that drive the live UI;
+    without it they answer gui_unavailable.
+    """
+    register_gui_tools(mcp, bridge)
 
     def _status(refresh: bool) -> dict[str, Any]:
         if refresh:

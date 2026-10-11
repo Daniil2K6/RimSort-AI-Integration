@@ -124,7 +124,7 @@ def test_remote_bridge_round_trip(
     thread.start()
     qtbot.waitUntil(lambda: not thread.is_alive(), timeout=6000)  # type: ignore[attr-defined]
     thread.join()
-    assert calls == ["mods_tab"]
+    assert calls == ["mods_tab"], replies
     assert replies[0]["ok"] is True, replies
     assert replies[0]["visible_tab"] == "mods_tab"
     server.stop()

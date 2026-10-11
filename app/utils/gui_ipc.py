@@ -203,7 +203,13 @@ class RemoteGuiBridge:
 
         try:
             socket.connectToServer(self.name)
-            if not socket.waitForConnected(remaining()):
+            while (
+                socket.state() == QLocalSocket.LocalSocketState.ConnectingState
+                and time.monotonic() < deadline
+            ):
+                socket.waitForConnected(min(20, remaining()))
+                time.sleep(0.001)
+            if socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
                 return {
                     "ok": False,
                     "code": "gui_unavailable",
@@ -220,8 +226,9 @@ class RemoteGuiBridge:
                 return {"ok": False, "code": "gui_request_too_large"}
             socket.write(payload)
             socket.flush()
-            if socket.bytesToWrite():
-                socket.waitForBytesWritten(remaining())
+            while socket.bytesToWrite() and time.monotonic() < deadline:
+                socket.waitForBytesWritten(min(20, remaining()))
+                time.sleep(0.001)
             response = bytearray()
             while time.monotonic() < deadline:
                 response.extend(socket.readAll().data())
@@ -245,6 +252,8 @@ class RemoteGuiBridge:
                 "ok": False,
                 "code": "gui_timeout",
                 "error": "Нет подтверждения от RimSort. Проверьте состояние перед повтором действия.",
+                "socket_error": socket.errorString(),
+                "pending_bytes": socket.bytesToWrite(),
             }
         except (ValueError, OSError):
             return {"ok": False, "code": "gui_invalid_response"}

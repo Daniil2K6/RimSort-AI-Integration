@@ -103,6 +103,7 @@ class MCPContext:
         self._revision: int = 0
         self.gui_bridge: Any = None
         self._gui_snapshot: list[str] | None = None
+        self._scanned_config_path: Path | None = None
 
     def _read_gui_working(self) -> list[str] | None:
         if self.gui_bridge is None:
@@ -112,7 +113,15 @@ class MCPContext:
             raise MCPContextError(
                 f"GUI state unavailable: {state.get('code', 'gui_error')}"
             )
-        if state.get("config_path") != str(self.mods_config_path.resolve()):
+        config_path = self.mods_config_path.resolve()
+        if (
+            self._scanned_config_path is not None
+            and self._scanned_config_path != config_path
+        ):
+            raise MCPContextError(
+                "Selected instance changed; call get_status(refresh=true) before editing."
+            )
+        if state.get("config_path") != str(config_path):
             raise MCPContextError(
                 "GUI instance differs from MCP instance; select the same instance or use --headless."
             )
@@ -274,6 +283,7 @@ class MCPContext:
     def refresh(self) -> int:
         """Rescan installed mods. Returns the number of mods found."""
         data = self.load_settings()
+        scan_config_path = self.mods_config_path.resolve()
         prefer_versioned = bool(data.get("prefer_versioned_about_tags", True))
         case_insensitive = bool(
             data.get("case_insensitive_about_xml_lookup", sys.platform == "linux")
@@ -361,6 +371,13 @@ class MCPContext:
                 pid_map.setdefault(str(mod.package_id), set()).add(path)
         self._packageid_to_paths = pid_map
         self._compiled = None
+        if self._scanned_config_path != scan_config_path:
+            self._working_ids = None
+            self._saved_signature = None
+            self._gui_snapshot = None
+            if self._scanned_config_path is not None:
+                self._revision += 1
+        self._scanned_config_path = scan_config_path
 
         if not search_dirs:
             self.last_scan_error = "No valid mod folders found for this instance"
@@ -449,6 +466,13 @@ class MCPContext:
         """
         package_id_list = [str(pid) for pid in package_ids]
         if self.gui_bridge is not None:
+            if (
+                self._scanned_config_path is not None
+                and self._scanned_config_path != self.mods_config_path.resolve()
+            ):
+                raise MCPContextError(
+                    "Selected instance changed; call get_status(refresh=true) before editing."
+                )
             if self._gui_snapshot is None:
                 self.working_ids()
             result = self.gui_bridge.submit(

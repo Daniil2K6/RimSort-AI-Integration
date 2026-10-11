@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-import time
 from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from PySide6.QtCore import QObject, QTimer, Signal
+from PySide6.QtCore import QCoreApplication, QEventLoop, QObject, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 #: Single command understood by the server.
@@ -195,70 +194,76 @@ class RemoteGuiBridge:
         timeout: float = 5.0,
         **kwargs: Any,
     ) -> dict[str, Any]:
+        # Qt's native event dispatcher handles Windows overlapped pipe I/O.
+        # Polling blocking wait methods can leave those completions undelivered.
+        core_app = QCoreApplication.instance() or QCoreApplication([])
         socket = QLocalSocket()
-        deadline = time.monotonic() + timeout
+        loop = QEventLoop()
+        timer = QTimer()
+        timer.setSingleShot(True)
+        response = bytearray()
+        connected = False
+        oversized = False
+        payload = (
+            json.dumps(
+                {"version": 1, "action": action, "params": params or {}},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            + b"\n"
+        )
+        if len(payload) > 1024 * 1024:
+            return {"ok": False, "code": "gui_request_too_large"}
 
-        def remaining() -> int:
-            return max(1, int((deadline - time.monotonic()) * 1000))
+        def send() -> None:
+            nonlocal connected
+            connected = True
+            socket.write(payload)
+            socket.flush()
 
+        def read() -> None:
+            nonlocal oversized
+            response.extend(socket.readAll().data())
+            oversized = len(response) > 1024 * 1024
+            if oversized or b"\n" in response:
+                loop.quit()
+
+        socket.connected.connect(send)
+        socket.readyRead.connect(read)
+        socket.disconnected.connect(loop.quit)
+        socket.errorOccurred.connect(loop.quit)
+        timer.timeout.connect(loop.quit)
+        timer.start(max(1, int(timeout * 1000)))
         try:
             socket.connectToServer(self.name)
-            while (
-                socket.state() == QLocalSocket.LocalSocketState.ConnectingState
-                and time.monotonic() < deadline
-            ):
-                socket.waitForConnected(min(20, remaining()))
-                time.sleep(0.001)
-            if socket.state() != QLocalSocket.LocalSocketState.ConnectedState:
+            if socket.state() != QLocalSocket.LocalSocketState.UnconnectedState:
+                loop.exec()
+            read()
+            if oversized:
+                return {"ok": False, "code": "gui_response_too_large"}
+            if b"\n" in response:
+                result = json.loads(bytes(response).split(b"\n", 1)[0])
+                if isinstance(result, dict):
+                    return result
+                return {"ok": False, "code": "gui_invalid_response"}
+            if not connected:
                 return {
                     "ok": False,
                     "code": "gui_unavailable",
                     "error": "Откройте RimSort для управления интерфейсом.",
+                    "socket_error": socket.errorString(),
                 }
-            payload = (
-                json.dumps(
-                    {"version": 1, "action": action, "params": params or {}},
-                    ensure_ascii=False,
-                ).encode("utf-8")
-                + b"\n"
-            )
-            if len(payload) > 1024 * 1024:
-                return {"ok": False, "code": "gui_request_too_large"}
-            socket.write(payload)
-            socket.flush()
-            while socket.bytesToWrite() and time.monotonic() < deadline:
-                socket.waitForBytesWritten(min(20, remaining()))
-                time.sleep(0.001)
-            response = bytearray()
-            while time.monotonic() < deadline:
-                response.extend(socket.readAll().data())
-                if len(response) > 1024 * 1024:
-                    return {"ok": False, "code": "gui_response_too_large"}
-                if b"\n" in response:
-                    result = json.loads(bytes(response).split(b"\n", 1)[0])
-                    if isinstance(result, dict):
-                        return result
-                    break
-                if not socket.waitForReadyRead(min(20, remaining())):
-                    response.extend(socket.readAll().data())
-                    if (
-                        b"\n" not in response
-                        and socket.state()
-                        == QLocalSocket.LocalSocketState.UnconnectedState
-                    ):
-                        break
-                time.sleep(0.001)  # Allow Python GUI slots in same-process tests.
             return {
                 "ok": False,
                 "code": "gui_timeout",
                 "error": "Нет подтверждения от RimSort. Проверьте состояние перед повтором действия.",
                 "socket_error": socket.errorString(),
-                "pending_bytes": socket.bytesToWrite(),
             }
         except (ValueError, OSError):
             return {"ok": False, "code": "gui_invalid_response"}
         finally:
+            timer.stop()
             socket.abort()
+            del core_app
 
     def get_state(self, detail: str = "summary") -> dict[str, Any]:
         return self.submit("get_state", {"detail": detail})

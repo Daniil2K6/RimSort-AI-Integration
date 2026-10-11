@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,23 @@ from app.models.metadata.metadata_structure import (
 )
 from app.utils.app_info import AppInfo
 from tests.mcp.conftest import MCPEnv
+
+
+class _FakeGuiBridge:
+    """Pure domain-test adapter; real Qt dispatch is tested in GUI/IPC tests."""
+
+    def __init__(self) -> None:
+        self.executors: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {}
+
+    def register_executor(
+        self, action: str, callback: Callable[[dict[str, Any]], dict[str, Any]]
+    ) -> None:
+        self.executors[action] = callback
+
+    def submit(
+        self, action: str, params: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        return {"ok": True, **self.executors[action](params or {})}
 
 
 def test_failed_serialization_keeps_previous_config(
@@ -177,11 +195,9 @@ def test_sort_settings_defaults(mcp_env: MCPEnv) -> None:
 
 
 def test_gui_working_list_and_guarded_commit(mcp_env: MCPEnv) -> None:
-    from app.ai.gui_bridge import GuiActionBridge
-
     ctx = mcp_env.ctx
     gui_ids = ["ludeon.rimworld", "test.modb"]
-    bridge = GuiActionBridge()
+    bridge = _FakeGuiBridge()
     bridge.register_executor(
         "get_modlist",
         lambda p: {
@@ -220,12 +236,10 @@ def test_lost_gui_never_falls_back_to_disk_write(mcp_env: MCPEnv) -> None:
 
 
 def test_manual_edit_between_preview_and_commit_is_not_rebased(mcp_env: MCPEnv) -> None:
-    from app.ai.gui_bridge import GuiActionBridge
-
     ctx = mcp_env.ctx
     gui_ids = ["ludeon.rimworld", "test.moda"]
     original = ctx.mods_config_path.read_bytes()
-    bridge = GuiActionBridge()
+    bridge = _FakeGuiBridge()
     bridge.register_executor(
         "get_modlist",
         lambda p: {

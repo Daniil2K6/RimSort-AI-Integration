@@ -262,6 +262,14 @@ class RemoteGuiBridge:
             return {"ok": False, "code": "gui_invalid_response"}
         finally:
             timer.stop()
+            # Break signal/closure cycles while still on the owning thread.
+            # Otherwise Python GC may destroy Qt socket objects in a scanner
+            # worker thread after this request has already returned.
+            socket.connected.disconnect(send)
+            socket.readyRead.disconnect(read)
+            socket.disconnected.disconnect(loop.quit)
+            socket.errorOccurred.disconnect(loop.quit)
+            timer.timeout.disconnect(loop.quit)
             socket.abort()
             del core_app
 

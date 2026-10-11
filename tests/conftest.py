@@ -51,9 +51,9 @@ def auto_accept_dialogs(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(QDialog, "exec", fake_exec)
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def qapp() -> Generator[QApplication | QCoreApplication, None, None]:
-    """Create a QApplication instance for Qt tests."""
+    """Keep one QApplication alive for the entire Qt test session."""
     app = QApplication.instance()
     if app is None:
         app = QApplication([])

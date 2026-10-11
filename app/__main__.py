@@ -246,6 +246,12 @@ if __name__ == "__main__":
     try:
         lock = SingleInstanceLock(AppInfo().app_storage_folder / "rimsort.lock")
         if not lock.acquire():
+            from PySide6.QtCore import QCoreApplication
+            from PySide6.QtWidgets import QApplication, QMessageBox
+
+            # Keep one GUI-capable application alive for both the IPC request
+            # and the warning dialog if attachment fails.
+            _app = QApplication(sys.argv)
             # Another instance is running. With --attach-gui, hand off to it
             # by raising its window instead of showing an error dialog.
             if "--attach-gui" in sys.argv:
@@ -255,10 +261,6 @@ if __name__ == "__main__":
                     logger.info("Attached to the running RimSort instance")
                     sys.exit(0)
 
-            from PySide6.QtCore import QCoreApplication
-            from PySide6.QtWidgets import QApplication, QMessageBox
-
-            _app = QApplication(sys.argv)
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Icon.Warning)
             msg.setWindowTitle(

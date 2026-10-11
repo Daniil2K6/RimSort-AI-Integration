@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QApplication, QInputDialog
 
 from app.ai.agent import CANCELLED_TEXT
 from app.ai.chat_store import ChatMessage, ChatSession
+from app.ai.events import AgentEvent, EventKind, EventStatus
 from app.ai.providers import new_provider
 from app.models.settings import Settings
 from app.views.chat_panel import (
@@ -66,6 +67,7 @@ def _save_session_with_message(panel: ChatPanel, title: str, text: str) -> str:
 class _FakeWorker:
     def __init__(self, **kwargs: Any) -> None:
         self.activity = MagicMock()
+        self.agent_event = MagicMock()
         self.stream_text = MagicMock()
         self.confirm_requested = MagicMock()
         self.finished_ok = MagicMock()
@@ -498,6 +500,146 @@ class TestChatPanelStreaming:
         assert "до ошибки" in text
         assert "сбой связи" in text
         assert chat_panel._live_turn is None
+
+
+class TestChatPanelEventJournal:
+    def _evt(
+        self,
+        kind: EventKind,
+        *,
+        run_id: str = "run1",
+        seq: int = 0,
+        tool_call_id: str = "",
+        status: EventStatus | None = None,
+        summary: str = "",
+        payload: dict[str, Any] | None = None,
+        timestamp: float = 0.0,
+    ) -> AgentEvent:
+        return AgentEvent(
+            run_id=run_id,
+            seq=seq,
+            kind=kind,
+            tool_call_id=tool_call_id,
+            status=status,
+            summary=summary,
+            payload=payload or {},
+            timestamp=timestamp,
+        )
+
+    def test_tool_events_upsert_rows_keyed_by_call_id(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        """requested -> running -> succeeded updates one row by tool_call_id."""
+        chat_panel._on_agent_event(
+            self._evt(
+                EventKind.TOOL_STARTED,
+                tool_call_id="c1",
+                status=EventStatus.RUNNING,
+                payload={"tool": "list_mods"},
+            )
+        )
+        turn = chat_panel._live_turn
+        assert turn is not None
+        assert len(turn._tool_rows) == 1
+        assert "list_mods" in turn._tool_rows["c1"].plain_text()
+
+        chat_panel._on_agent_event(
+            self._evt(
+                EventKind.TOOL_COMPLETED,
+                tool_call_id="c1",
+                status=EventStatus.SUCCEEDED,
+                payload={"tool": "list_mods"},
+                timestamp=1.5,
+            )
+        )
+        # Same row updated in place, now with a duration suffix.
+        assert len(turn._tool_rows) == 1
+        assert "list_mods" in turn._tool_rows["c1"].plain_text()
+
+    def test_identical_calls_get_separate_rows(self, chat_panel: ChatPanel) -> None:
+        """Two identical calls with distinct IDs are two journal rows."""
+        for cid in ("a", "b"):
+            chat_panel._on_agent_event(
+                self._evt(
+                    EventKind.TOOL_STARTED,
+                    tool_call_id=cid,
+                    status=EventStatus.RUNNING,
+                    payload={"tool": "get_status"},
+                )
+            )
+        turn = chat_panel._live_turn
+        assert turn is not None
+        assert set(turn._tool_rows) == {"a", "b"}
+
+    def test_stale_run_events_are_dropped(self, chat_panel: ChatPanel) -> None:
+        """A late event from a finished run never leaks into the new chat."""
+        chat_panel._on_agent_event(self._evt(EventKind.RUN_STARTED, run_id="run1"))
+        chat_panel._on_agent_event(
+            self._evt(
+                EventKind.TOOL_STARTED,
+                run_id="run1",
+                tool_call_id="keep",
+                status=EventStatus.RUNNING,
+                payload={"tool": "list_mods"},
+            )
+        )
+        # A new run starts; an old-run event must be ignored.
+        chat_panel._on_agent_event(self._evt(EventKind.RUN_STARTED, run_id="run2"))
+        chat_panel._on_agent_event(
+            self._evt(
+                EventKind.TOOL_STARTED,
+                run_id="run1",
+                tool_call_id="stale",
+                status=EventStatus.RUNNING,
+                payload={"tool": "delete_mod"},
+            )
+        )
+        turn = chat_panel._live_turn
+        assert turn is not None
+        assert "stale" not in turn._tool_rows
+        assert "keep" in turn._tool_rows
+
+    def test_completion_records_duration_from_start(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        """Completion shows a duration measured from TOOL_STARTED."""
+        chat_panel._on_agent_event(
+            self._evt(
+                EventKind.TOOL_STARTED,
+                tool_call_id="c1",
+                status=EventStatus.RUNNING,
+                payload={"tool": "update_mods"},
+                timestamp=10.0,
+            )
+        )
+        chat_panel._on_agent_event(
+            self._evt(
+                EventKind.TOOL_COMPLETED,
+                tool_call_id="c1",
+                status=EventStatus.SUCCEEDED,
+                payload={"tool": "update_mods"},
+                timestamp=12.5,
+            )
+        )
+        turn = chat_panel._live_turn
+        assert turn is not None
+        text = turn._tool_rows["c1"].plain_text()
+        assert "(2.5s)" in text
+
+    def test_follow_off_does_not_force_scroll(self, chat_panel: ChatPanel) -> None:
+        """With follow disabled the journal still renders, scroll is left alone."""
+        chat_panel._follow_actions = False
+        chat_panel._on_agent_event(
+            self._evt(
+                EventKind.TOOL_STARTED,
+                tool_call_id="c1",
+                status=EventStatus.RUNNING,
+                payload={"tool": "list_mods"},
+            )
+        )
+        turn = chat_panel._live_turn
+        assert turn is not None
+        assert "c1" in turn._tool_rows
 
 
 class TestChatPanelActions:

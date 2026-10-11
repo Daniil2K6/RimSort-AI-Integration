@@ -299,10 +299,31 @@ def _resolve_call(
             return {"error": "Declined by user"}
         emit(f"→ {pretty}")
         _emit_tool(emitter, EventKind.TOOL_STARTED, call, pretty, EventStatus.RUNNING)
-        return call_tool_payload(server, call.name, call.arguments)
+        return _run_and_report(server, call, pretty, emitter)
     emit(f"→ {pretty}")
     _emit_tool(emitter, EventKind.TOOL_STARTED, call, pretty, EventStatus.RUNNING)
-    return call_tool_payload(server, call.name, call.arguments)
+    return _run_and_report(server, call, pretty, emitter)
+
+
+def _run_and_report(
+    server: MCPServer,
+    call: ToolCall,
+    pretty: str,
+    emitter: EventEmitter | None,
+) -> dict[str, Any]:
+    """Execute one tool and emit its completion event (succeeded/failed)."""
+    result = call_tool_payload(server, call.name, call.arguments)
+    status = EventStatus.FAILED if "error" in result else EventStatus.SUCCEEDED
+    _emit_tool(
+        emitter,
+        EventKind.TOOL_COMPLETED
+        if status is EventStatus.SUCCEEDED
+        else EventKind.TOOL_FAILED,
+        call,
+        pretty,
+        status,
+    )
+    return result
 
 
 def _emit_tool(
@@ -332,6 +353,9 @@ class AgentWorker(QThread):
     """
 
     activity = Signal(str)
+    #: Structured per-run events (AgentEvent) delivered over a queued
+    #: connection so the GUI can render a live action journal (Stage B).
+    agent_event = Signal(object)
     stream_text = Signal(str)
     confirm_requested = Signal(str)
     finished_ok = Signal(str)
@@ -385,6 +409,7 @@ class AgentWorker(QThread):
                 emit=self.activity.emit,
                 is_cancelled=self._cancel.is_set,
                 on_text=self.stream_text.emit,
+                on_event=self._emit_event,
             )
         except AIError as exc:
             logger.warning("AI chat request failed: {}", exc)
@@ -394,6 +419,10 @@ class AgentWorker(QThread):
             self.failed.emit(f"Unexpected error: {exc}")
         else:
             self.finished_ok.emit(text)
+
+    def _emit_event(self, event: AgentEvent) -> None:
+        """Forward one structured event to the GUI (queued cross-thread)."""
+        self.agent_event.emit(event)
 
     def _confirm(self, pretty: str) -> bool:
         if self._cancel.is_set():

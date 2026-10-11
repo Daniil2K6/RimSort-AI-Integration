@@ -154,6 +154,16 @@ class MessageBubble(QFrame):
             self.regenerate_requested.emit()
 
 
+#: Display glyph for each structured tool status in the live journal.
+_STATUS_GLYPHS = {
+    "requested": "…",
+    "running": "…",
+    "succeeded": "→",
+    "failed": "✗",
+    "declined": "✗",
+}
+
+
 class ToolCallRow(QFrame):
     """One agent activity line: a small monospace status row.
 
@@ -183,6 +193,22 @@ class ToolCallRow(QFrame):
             color = self._error_color
         else:
             color = self._muted_color
+        self._label.setStyleSheet(
+            f"color: {color}; font-family: monospace; font-size: 11px;"
+        )
+
+    def set_tool_state(
+        self, status: str, name: str, duration: float | None = None
+    ) -> None:
+        """Render a tool row from an explicit status and its tool name."""
+        glyph = _STATUS_GLYPHS.get(status, "…")
+        label = f"{glyph} {name}"
+        if duration is not None:
+            label += f"  ({duration:.1f}s)"
+        self._label.setText(label)
+        color = (
+            self._error_color if status in ("failed", "declined") else self._muted_color
+        )
         self._label.setStyleSheet(
             f"color: {color}; font-family: monospace; font-size: 11px;"
         )
@@ -241,6 +267,23 @@ class AssistantTurn(QWidget):
             self._layout.addWidget(row)
         else:
             row.set_status_text(text)
+
+    def upsert_tool_state(
+        self, key: str, status: str, name: str, duration: float | None = None
+    ) -> None:
+        """Add/update a tool row keyed by a stable id with an explicit status.
+
+        Keyed by ``tool_call_id`` so identical calls never merge and status
+        transitions (requested -> running -> succeeded/failed/declined)
+        update the same row in place. ``duration`` (seconds) is shown once a
+        terminal status arrives.
+        """
+        row = self._tool_rows.get(key)
+        if row is None:
+            row = ToolCallRow("", self._activity_color, self._error_color)
+            self._tool_rows[key] = row
+            self._layout.addWidget(row)
+        row.set_tool_state(status, name, duration=duration)
 
     # --------------------------------------------------------------- bubble
     def _ensure_bubble(self) -> MessageBubble:

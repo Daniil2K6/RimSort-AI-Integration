@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 from app.ai.agent import CANCELLED_TEXT, AgentWorker
 from app.ai.chat_store import ChatMessage, ChatSession, ChatStore, make_title
 from app.ai.client import AIClient
+from app.ai.events import EventKind
 from app.ai.prompt import effective_system_prompt
 from app.ai.providers import active_provider as get_active_provider
 from app.ai.providers import (
@@ -101,6 +102,14 @@ def _luminance(color: str) -> float:
 #: UI; buffering deltas and flushing on this timer keeps the app responsive.
 STREAM_FLUSH_MS = 50
 
+#: Fallback journal status when an event carries none, keyed by EventKind.
+_KIND_DEFAULT_STATUS = {
+    EventKind.APPROVAL_REQUESTED: "requested",
+    EventKind.TOOL_STARTED: "running",
+    EventKind.TOOL_COMPLETED: "succeeded",
+    EventKind.TOOL_FAILED: "failed",
+}
+
 
 class ChatPanel(QWidget):
     """Chat UI: history sidebar, message view, input box, provider menu."""
@@ -132,6 +141,11 @@ class ChatPanel(QWidget):
         self._stream_timer.setSingleShot(True)
         self._stream_timer.setInterval(STREAM_FLUSH_MS)
         self._stream_timer.timeout.connect(self._flush_stream_turn)
+        self._active_run_id: str | None = None
+        self._tool_started_at: dict[str, float] = {}
+        # "Follow AI actions" / "Highlight action target" (Stage B).
+        self._follow_actions = True
+        self._highlight_target = True
 
         ensure_providers(self.settings)
         self._build_ui()
@@ -573,17 +587,21 @@ class ChatPanel(QWidget):
             model=self.settings.ai_model,
         )
         self._set_busy(True)
+        self._active_run_id = None
+        self._tool_started_at.clear()
         worker = AgentWorker(
             client=client,
             server_provider=self._provide_server,
             messages=api_messages,
         )
-        worker.activity.connect(self._append_activity)
+        # Structured events drive the live action journal (Stage B); the raw
+        # activity string is no longer connected to avoid double-rendering.
         worker.stream_text.connect(self._on_stream_text)
         worker.confirm_requested.connect(self._on_confirm_requested)
         worker.finished_ok.connect(self._on_finished_ok)
         worker.failed.connect(self._on_failed)
         worker.finished.connect(self._on_worker_finished)
+        worker.agent_event.connect(self._on_agent_event)
         self._worker = worker
         worker.start()
 
@@ -676,6 +694,45 @@ class ChatPanel(QWidget):
         """Stop the throttle timer and render any last buffered deltas."""
         self._stream_timer.stop()
         self._flush_stream_turn()
+
+    @Slot(object)
+    def _on_agent_event(self, event: Any) -> None:
+        """Render one structured agent event into the live action journal.
+
+        Tool lifecycle events upsert a row keyed by ``tool_call_id`` so the
+        same call never duplicates and its status updates in place
+        (requested -> running -> succeeded/failed/declined). Events from a
+        stale run are dropped so a late queued event never leaks into a new
+        chat. Completion carries a real duration measured from TOOL_STARTED.
+        """
+        kind = getattr(event, "kind", None)
+        if kind is EventKind.RUN_STARTED:
+            self._active_run_id = event.run_id
+            self._tool_started_at.clear()
+            return
+        if self._active_run_id is not None and event.run_id != self._active_run_id:
+            return  # stale event from a finished run
+        tool_kinds = {
+            EventKind.APPROVAL_REQUESTED,
+            EventKind.TOOL_STARTED,
+            EventKind.TOOL_COMPLETED,
+            EventKind.TOOL_FAILED,
+        }
+        if kind not in tool_kinds:
+            return
+        status_attr = getattr(event, "status", None)
+        status = getattr(status_attr, "value", None) or _KIND_DEFAULT_STATUS[kind]
+        name = (getattr(event, "payload", None) or {}).get("tool") or event.summary
+        key = event.tool_call_id or event.summary
+        duration: float | None = None
+        if kind in (EventKind.TOOL_STARTED, EventKind.APPROVAL_REQUESTED):
+            self._tool_started_at[key] = event.timestamp
+        elif key in self._tool_started_at:
+            duration = max(0.0, event.timestamp - self._tool_started_at.pop(key))
+        turn = self._ensure_live_turn()
+        turn.upsert_tool_state(key, status, name, duration=duration)
+        if self._follow_actions:
+            self._scroll_to_bottom()
 
     @Slot(str)
     def _on_finished_ok(self, text: str) -> None:
@@ -892,9 +949,21 @@ class ChatPanel(QWidget):
         self._chat_layout.insertWidget(index, widget)
         self._turn_widgets.append(widget)
         self._update_bubble_actions()
-        self._scroll_to_bottom()
+        self._scroll_to_bottom(force=True)
 
-    def _scroll_to_bottom(self) -> None:
+    def _is_at_bottom(self, threshold: int = 48) -> bool:
+        """Whether the viewport is already pinned near the bottom."""
+        bar = self.chat_scroll.verticalScrollBar()
+        return (bar.maximum() - bar.value()) <= threshold
+
+    def _scroll_to_bottom(self, force: bool = False) -> None:
+        """Scroll to the bottom, but only if the user is already there.
+
+        During streaming/journal updates this keeps reading history from
+        jumping back down; a brand-new turn forces the scroll.
+        """
+        if not force and not self._is_at_bottom():
+            return
         bar = self.chat_scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 

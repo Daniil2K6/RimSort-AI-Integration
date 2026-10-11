@@ -9,7 +9,7 @@ lands.
 | Stage | Scope | Status |
 |-------|-------|--------|
 | A | Real streaming + correct cancellation | **Done** |
-| B | Structured events + live action journal | Pending |
+| B | Structured events + live action journal | **Done** |
 | C | GUI action bridge + stable ID registry | Pending |
 | D | Working/saved mod-list state + preview/apply | Pending |
 | E | Batch/dependency/conflict/log MCP tools | Pending |
@@ -67,7 +67,29 @@ Verified: `ruff check`, `ruff format --check`, `mypy`, full `pytest`
 
 ## Stage B — structured events + live action journal
 
-Pending.
+Done on top of the `AgentEvent`/`EventEmitter` contract built in Stage A:
+
+- `AgentEvent` carries `event_id`, `run_id`, `round_id`, `seq`, `timestamp`,
+  `kind`, `tool_call_id`/`action_id`, `status`, `summary`, `payload`.
+  Kinds cover the full lifecycle including `approval_resolved`/`tool_progress`.
+- `AgentWorker.agent_event` is a queued cross-thread `Signal(object)`; the GUI
+  renders the journal from events, not from the old activity strings. The raw
+  `activity` string is no longer connected for tool rows (avoids double render).
+- Live journal: tool rows keyed by `tool_call_id` (identical calls never merge),
+  status requested/running/succeeded/failed/declined updated in place, real
+  duration measured from `TOOL_STARTED` to completion.
+- Late-event safety: a new run resets `_active_run_id`; events from a stale run
+  are dropped so a queued event never leaks into a new chat.
+- Markdown streaming is buffered on a 50ms QTimer (see the responsiveness fix)
+  with a mandatory final drain on finish/fail/cancel.
+- Auto-scroll only when the viewport is already near the bottom, so reading
+  history does not jump down during streaming/journal updates.
+- Settings toggles `follow actions` / `highlight action target` (panel flags;
+  highlight overlay wiring lands with Stage C's bridge).
+
+Verified: ruff/format/mypy clean; full suite 1641 passed / 1 skipped; jscpd 0
+clones. New journal tests cover in-place status updates, distinct IDs for
+identical calls, stale-run filtering, duration, and follow-off behaviour.
 
 ## Stage C — GUI action bridge + stable ID registry
 

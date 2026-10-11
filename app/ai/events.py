@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import itertools
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -77,6 +78,7 @@ class AgentEvent:
     run_id: str
     seq: int
     kind: EventKind
+    event_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     summary: str = ""
     round_id: int = 0
     message_id: str = ""
@@ -91,6 +93,7 @@ class AgentEvent:
         """Compact JSON-able form (used by the session journal and tests)."""
         data: dict[str, Any] = {
             "schema_version": self.schema_version,
+            "event_id": self.event_id,
             "run_id": self.run_id,
             "seq": self.seq,
             "timestamp": round(self.timestamp, 3),
@@ -172,6 +175,4 @@ class EventEmitter:
 
 def new_run_id() -> str:
     """A fresh, collision-resistant id for one user turn."""
-    import uuid
-
     return uuid.uuid4().hex

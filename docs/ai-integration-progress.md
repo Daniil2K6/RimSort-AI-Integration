@@ -12,7 +12,7 @@ lands.
 | B | Structured events + live action journal | **Done** |
 | C | GUI action bridge + stable ID registry | **Done** |
 | D | Working/saved mod-list state + preview/apply | **Done** |
-| E | Batch/dependency/conflict/log MCP tools | Pending |
+| E | Batch/dependency/conflict/log MCP tools | **Done** |
 | F | Token economy (prompt/session/context budget) | Pending |
 | G | IPC bridge (`--attach-gui`) | Pending |
 
@@ -160,7 +160,33 @@ rejection, and external-edit detection.
 
 ## Stage E — Batch / dependency / conflict / log MCP tools
 
-Pending.
+Done. Four new headless tools over the existing metadata/dependency graphs, plus
+an atomic batch mutator.
+
+- `app/mcp/analysis.py`:
+  - `resolve_dependencies(package_ids, include_load_after)` — hard
+    dependencies (and optionally soft load-order predecessors) for a set of
+    mods, reporting which are installed/active and which are missing from the
+    working list (so the agent knows what to add before applying a plan).
+  - `find_conflicts(package_ids?)` — incompatible pairs among a set (default:
+    the working list) using the compiled `incompatibilities` graph, each pair
+    reported once.
+  - `analyze_player_log(max_errors)` — locates the instance's `Player.log`,
+    extracts exception blocks (message, stack depth, any `Mods/<Folder>`
+    frames), capped; `log_not_found` when absent.
+- `apply_modlist_batch(ops, expected_revision?, ...)` — applies an ordered list
+  of add/remove/move operations to the working list in **one** atomic commit:
+  a single revision bump, a single backup, a single write. Any error aborts
+  the whole batch with nothing written; a stale `expected_revision` rejects
+  (interlock), consistent with `apply_modlist_plan`.
+- Existing `get_mod_details` already exposes `rules.dependencies` /
+  `load_after` / `incompatible_with`; `list_mods` covers discovery, so the
+  dependency surface is complete without inflating the list payload.
+
+Verified: ruff/format/mypy clean; full suite 1672 passed / 1 skipped; jscpd 0
+clones. New tests cover dependency resolution, conflict detection, log parsing
+(fixture Player.log with a mod-frame exception) and no-log, and batch apply
+(atomic single revision, interlock, unknown/empty rejection).
 
 ## Stage F — Token economy
 

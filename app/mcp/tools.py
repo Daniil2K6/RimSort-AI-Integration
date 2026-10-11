@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from app.mcp import launcher, modops, updates
+from app.mcp import analysis, launcher, modops, updates
 from app.mcp.context import MCPContext
 from app.mcp.gui import register_gui_tools
 from app.models.metadata.metadata_structure import AboutXmlMod
@@ -380,6 +380,84 @@ def register_tools(
         }
 
     @mcp.tool()
+    def apply_modlist_batch(
+        ops: list[dict[str, Any]],
+        expected_revision: int | None = None,
+        allow_missing: bool = False,
+        backup: bool = True,
+    ) -> dict[str, Any]:
+        """Apply many add/remove/move operations to the working list in one
+        atomic commit (Stage E). One revision bump, one backup, one write.
+
+        ops: ordered list of {"op": "add"|"remove"|"move", "package_id": ...,
+        "move_to_index": int?}. All ops apply to the working list; on any
+        error nothing is written. Pass expected_revision to interlock with
+        concurrent GUI edits.
+        """
+        if not ops:
+            raise ToolError("ops must not be empty")
+        state = ctx.modlist_state()
+        if expected_revision is not None and expected_revision != state["revision"]:
+            return {
+                "ok": False,
+                "code": "revision_mismatch",
+                "error": (
+                    f"Working list changed (expected revision "
+                    f"{expected_revision}, current {state['revision']})."
+                ),
+                "current": state,
+            }
+
+        ids = ctx.working_ids()
+        applied: list[dict[str, Any]] = []
+        for index, op in enumerate(ops):
+            kind = str(op.get("op", ""))
+            pid = str(op.get("package_id", ""))
+            if kind == "add":
+                if pid and not any(pid.lower() == e.lower() for e in ids):
+                    if not allow_missing and not ctx.paths_for_pid(pid):
+                        raise ToolError(
+                            f"Unknown packageIds in op {index} "
+                            f"(use allow_missing=true): {pid}"
+                        )
+                    ids.append(pid)
+                    applied.append({"op": "add", "package_id": pid})
+            elif kind == "remove":
+                remove_set = {pid.lower()}
+                ids = [e for e in ids if e.lower() not in remove_set]
+                applied.append({"op": "remove", "package_id": pid})
+            elif kind == "move":
+                src = next(
+                    (i for i, e in enumerate(ids) if e.lower() == pid.lower()), -1
+                )
+                if src == -1:
+                    raise ToolError(f"op {index}: move_id {pid!r} is not in the list")
+                target = op.get("move_to_index", -1)
+                target = int(target) if target is not None else -1
+                target = target if target >= 0 else len(ids) - 1
+                target = min(max(target, 0), max(len(ids) - 1, 0))
+                ids.insert(target, ids.pop(src))
+                applied.append(
+                    {"op": "move", "package_id": pid, "from": src, "to": target}
+                )
+            else:
+                raise ToolError(f"op {index}: unknown op {kind!r}")
+
+        if len(ids) < 1:
+            raise ToolError("Refusing to write an empty active mod list")
+        ctx.set_working_ids(ids)
+        result = ctx.commit_working(backup=backup)
+        return {
+            "ok": True,
+            "applied": applied,
+            "count": len(applied),
+            "revision": result["revision"],
+            "written": result["written"],
+            "backup": result["backup"],
+            "state": ctx.modlist_state(),
+        }
+
+    @mcp.tool()
     def validate_modlist() -> dict[str, Any]:
         """Check the active list: missing mods, duplicates, load-order
         violations (loadAfter/loadBefore), incompatible pairs, cycles.
@@ -566,6 +644,40 @@ def register_tools(
     )
     def _resource_active_modlist() -> dict[str, Any]:
         return modops.current_active_ids(ctx)
+
+    # ---- Analysis (Stage E) ----
+
+    @mcp.tool()
+    def resolve_dependencies(
+        package_ids: list[str], include_load_after: bool = False
+    ) -> dict[str, Any]:
+        """Required dependencies for a set of mods and which are not yet active.
+
+        include_load_after also pulls in soft load-order predecessors. Use
+        missing_from_active to know what to add before applying a plan.
+        """
+        return analysis.resolve_dependencies(
+            ctx, package_ids, include_load_after=include_load_after
+        )
+
+    @mcp.tool()
+    def find_conflicts(package_ids: list[str] | None = None) -> dict[str, Any]:
+        """Incompatible pairs among the given set (default: the working list).
+
+        Reports each conflicting pair once. Cross-check with validate_modlist
+        for order violations and cycles.
+        """
+        return analysis.find_conflicts(ctx, package_ids)
+
+    @mcp.tool()
+    def analyze_player_log(max_errors: int = 25) -> dict[str, Any]:
+        """Scan Player.log for exception blocks and implicated mod folders.
+
+        Returns up to max_errors exception blocks with the message, stack
+        depth and any Mods/<Folder> paths found in the frames. log_not_found
+        if the instance has no Player.log.
+        """
+        return analysis.analyze_player_log(ctx, max_errors=max_errors)
 
     # ---- Prompts ----
 

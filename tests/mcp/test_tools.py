@@ -14,10 +14,13 @@ from app.mcp.server import build_server
 from tests.mcp.conftest import MCPEnv
 
 EXPECTED_TOOLS = {
+    "analyze_player_log",
+    "apply_modlist_batch",
     "apply_modlist_plan",
     "apply_modpack",
     "check_workshop_updates",
     "delete_mod",
+    "find_conflicts",
     "get_active_modlist",
     "get_gui_state",
     "get_mod_details",
@@ -35,6 +38,7 @@ EXPECTED_TOOLS = {
     "list_mods",
     "load_modpack",
     "preview_modlist_changes",
+    "resolve_dependencies",
     "save_modpack",
     "set_active_modlist",
     "set_instance",

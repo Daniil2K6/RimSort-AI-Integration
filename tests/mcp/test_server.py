@@ -89,7 +89,7 @@ def test_stdio_end_to_end(mcp_env: MCPEnv, monkeypatch: pytest.MonkeyPatch) -> N
     async def session_flow() -> None:
         params = StdioServerParameters(
             command=sys.executable,
-            args=["-m", "app", "mcp", "--log-level", "WARNING"],
+            args=["-m", "app", "mcp", "--headless", "--log-level", "WARNING"],
             cwd=str(project_root),
             env=dict(os.environ),
         )

@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 from PySide6.QtCore import QCoreApplication
 
 from app.utils.gui_ipc import GuiIpcServer, gui_socket_name, request_gui_raise
 
 
-def test_socket_name_is_stable_and_scoped(tmp_path) -> None:
+def test_socket_name_is_stable_and_scoped(tmp_path: Path) -> None:
     name1 = gui_socket_name(tmp_path / "a")
     name2 = gui_socket_name(tmp_path / "a")
     other = gui_socket_name(tmp_path / "b")
@@ -18,13 +19,13 @@ def test_socket_name_is_stable_and_scoped(tmp_path) -> None:
     assert name1.startswith("rimsort-gui-")
 
 
-def test_request_raise_false_when_no_server(tmp_path) -> None:
+def test_request_raise_false_when_no_server(tmp_path: Path) -> None:
     """With nothing listening, the client reports no instance to attach to."""
     assert request_gui_raise(timeout_ms=50, name="rimsort-gui-missing") is False
 
 
 def test_server_start_stop_and_round_trip(
-    qtbot: object, qapp: QCoreApplication, tmp_path
+    qtbot: object, qapp: QCoreApplication, tmp_path: Path
 ) -> None:
     """A client's raise request reaches a listening server and is acknowledged."""
     name = f"rimsort-gui-test-{tmp_path.name}"
@@ -54,7 +55,7 @@ def test_server_start_stop_and_round_trip(
 
 
 def test_server_ignores_unknown_command(
-    qtbot: object, qapp: QCoreApplication, tmp_path
+    qtbot: object, qapp: QCoreApplication, tmp_path: Path
 ) -> None:
     """Only the 'raise' command emits; other payloads are ignored."""
     name = f"rimsort-gui-ign-{tmp_path.name}"

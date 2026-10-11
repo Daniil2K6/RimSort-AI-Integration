@@ -370,8 +370,6 @@ class MainWindow(QMainWindow):
 
     def _gui_apply_modlist(self, params: dict[str, Any]) -> dict[str, Any]:
         """Compare, persist and render in one main-thread transaction."""
-        from app.mcp.context import MCPContext
-
         state = self._gui_get_modlist({})
         if params.get("config_path") != state["config_path"]:
             return {"ok": False, "code": "gui_instance_mismatch"}
@@ -384,6 +382,8 @@ class MainWindow(QMainWindow):
         ids = params.get("package_ids")
         if not isinstance(ids, list) or not all(isinstance(pid, str) for pid in ids):
             return {"ok": False, "code": "invalid_modlist"}
+        from app.mcp.context import MCPContext
+
         panel = self.main_content_panel
         active, inactive, duplicates, missing = (
             panel.metadata_controller.get_mods_from_list(mod_list=ids)

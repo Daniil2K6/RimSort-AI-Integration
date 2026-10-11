@@ -70,7 +70,8 @@ def run_stdio(log_level: str = "INFO", headless: bool = False) -> None:
     bridge = None
     if not headless:
         remote = RemoteGuiBridge()
-        if remote.get_state().get("ok"):
+        probe = remote.get_state()
+        if probe.get("ok") or probe.get("code") != "gui_unavailable":
             bridge = remote
             logger.info("MCP attached to running RimSort GUI")
     ctx = MCPContext()

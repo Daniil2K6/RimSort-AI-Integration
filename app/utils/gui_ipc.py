@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from loguru import logger
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 #: Single command understood by the server.
@@ -71,6 +71,7 @@ class GuiIpcServer(QObject):
         # A leftover socket file from a crashed run would block listen().
         QLocalServer.removeServer(self._name)
         server = QLocalServer(self)
+        server.setMaxPendingConnections(32)
         server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
         server.newConnection.connect(self._on_new_connection)
         try:
@@ -103,6 +104,15 @@ class GuiIpcServer(QObject):
             socket = self._server.nextPendingConnection()
             if socket is None:
                 break
+            if len(self._buffers) >= 32:
+                socket.abort()
+                socket.deleteLater()
+                continue
+            socket.setReadBufferSize(1024 * 1024)
+            deadline = QTimer(socket)
+            deadline.setSingleShot(True)
+            deadline.timeout.connect(socket.abort)
+            deadline.start(30000)
             self._buffers[socket] = bytearray()
             socket.disconnected.connect(lambda s=socket: self._cleanup_client(s))
             socket.readyRead.connect(lambda s=socket: self._handle_client(s))

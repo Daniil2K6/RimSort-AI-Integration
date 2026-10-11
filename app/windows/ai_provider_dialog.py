@@ -183,8 +183,33 @@ class AIProviderDialog(QDialog):
         try:
             models = fetch_models(url, self.key_edit.text().strip())
         except ProviderError as exc:
-            self.fetch_status.setText(str(exc))
+            report = exc.report
+            self.fetch_status.setText(report.title if report is not None else str(exc))
+            self.fetch_status.setToolTip(str(exc))
+            box = InformationBox(
+                title="Ошибка подключения к ИИ",
+                text=report.title
+                if report is not None
+                else "Не удалось получить модели",
+                information=(
+                    report.explanation
+                    + "\n\nЧто можно сделать:\n"
+                    + "\n".join(
+                        f"{i}. {step}" for i, step in enumerate(report.steps, 1)
+                    )
+                )
+                if report is not None
+                else str(exc),
+                details=str(exc),
+                parent=self,
+            )
+            box.setTextFormat(Qt.TextFormat.PlainText)
+            box.setText(
+                report.title if report is not None else "Не удалось получить модели"
+            )
+            box.exec()
         else:
+            self.fetch_status.setToolTip("")
             self.models_edit.setPlainText("\n".join(models))
             self.fetch_status.setText(
                 self.tr("Found {n} models.").format(n=len(models))

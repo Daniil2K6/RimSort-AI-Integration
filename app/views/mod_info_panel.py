@@ -5,9 +5,10 @@ from re import match
 from typing import Any
 
 from loguru import logger
-from PySide6.QtCore import QCoreApplication, Qt
+from PySide6.QtCore import QCoreApplication, QPoint, Qt
 from PySide6.QtGui import QMouseEvent, QPixmap
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFrame,
     QHBoxLayout,
@@ -57,6 +58,12 @@ class ClickablePathLabel(QLabel):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet("text-decoration: underline;")
         self.path = ""
+        self._press_position: QPoint | None = None
+        self._dragged = False
+        self.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
 
     def setPath(self, path: str | None) -> None:
         """Set the path and update the display text."""
@@ -78,8 +85,36 @@ class ClickablePathLabel(QLabel):
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
-        """Handle mouse click to open the folder or URL if clickable."""
-        if event.button() == Qt.MouseButton.LeftButton and self.path and self.clickable:
+        """Begin selection; opening waits until release to distinguish dragging."""
+        self._press_position = event.position().toPoint()
+        self._dragged = False
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if (
+            self._press_position is not None
+            and (event.position().toPoint() - self._press_position).manhattanLength()
+            >= QApplication.startDragDistance()
+        ):
+            self._dragged = True
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """A simple click opens the path; selecting text never launches it."""
+        super().mouseReleaseEvent(event)
+        dragged = self._dragged or (
+            self._press_position is not None
+            and (event.position().toPoint() - self._press_position).manhattanLength()
+            >= QApplication.startDragDistance()
+        )
+        self._press_position = None
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and self.path
+            and self.clickable
+            and not dragged
+            and not self.hasSelectedText()
+        ):
             # If path looks like a URL, open in browser
             if self.path.startswith("http://") or self.path.startswith("https://"):
                 import webbrowser
@@ -102,7 +137,6 @@ class ClickablePathLabel(QLabel):
                         logger.warning(f"Mod folder does not exist: {self.path}")
                 except Exception as e:
                     logger.error(f"Failed to open mod folder {self.path}: {e}")
-        super().mousePressEvent(event)
 
 
 class ModInfoPanel:

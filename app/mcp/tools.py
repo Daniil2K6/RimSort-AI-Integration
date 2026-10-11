@@ -15,7 +15,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from app.mcp import analysis, github_mods, launcher, modops, updates
 from app.mcp.context import MCPContext
 from app.mcp.gui import register_gui_tools
-from app.models.metadata.metadata_structure import AboutXmlMod
+from app.models.metadata.metadata_structure import AboutXmlMod, CaseInsensitiveStr
 from app.utils.app_info import AppInfo
 
 if TYPE_CHECKING:
@@ -53,6 +53,10 @@ def register_tools(
         if config_exists:
             config = ctx.read_active_config()
             if config is not None:
+                if ctx.gui_bridge is not None:
+                    config.activeMods = [
+                        CaseInsensitiveStr(pid) for pid in ctx.working_ids()
+                    ]
                 active_count = len(config.activeMods)
                 _, missing = ctx.resolve_active_paths(config)
                 missing_count = len(missing)
@@ -121,6 +125,10 @@ def register_tools(
         active_config = ctx.read_active_config()
         active_paths: set[str] = set()
         if active_config is not None:
+            if ctx.gui_bridge is not None:
+                active_config.activeMods = [
+                    CaseInsensitiveStr(pid) for pid in ctx.working_ids()
+                ]
             resolved, _ = ctx.resolve_active_paths(active_config)
             active_paths = set(resolved)
 
@@ -183,6 +191,10 @@ def register_tools(
         active_config = ctx.read_active_config()
         active_paths: set[str] = set()
         if active_config is not None:
+            if ctx.gui_bridge is not None:
+                active_config.activeMods = [
+                    CaseInsensitiveStr(pid) for pid in ctx.working_ids()
+                ]
             resolved, _ = ctx.resolve_active_paths(active_config)
             active_paths = set(resolved)
 

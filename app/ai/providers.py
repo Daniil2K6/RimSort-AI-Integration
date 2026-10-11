@@ -16,13 +16,15 @@ from typing import TYPE_CHECKING, Any
 import requests
 from loguru import logger
 
+from app.ai.errors import AIError, http_error_report, network_error_report
+
 if TYPE_CHECKING:
     from app.models.settings import Settings
 
 MODEL_FETCH_TIMEOUT: tuple[float, float] = (5.0, 20.0)
 
 
-class ProviderError(Exception):
+class ProviderError(AIError):
     """A user-facing provider configuration failure (network, bad response)."""
 
 
@@ -194,20 +196,57 @@ def fetch_models(
     request_get: GetFn = get or requests.get
     try:
         response = request_get(url, headers=headers, timeout=MODEL_FETCH_TIMEOUT)
-    except requests.RequestException as exc:
-        raise ProviderError(f"Could not reach the endpoint: {exc}") from exc
+    except (requests.RequestException, OSError) as exc:
+        raise ProviderError(
+            network_error_report(exc, endpoint=url, secrets=(api_key,))
+        ) from exc
     status = getattr(response, "status_code", 0)
     if status != 200:
-        raise ProviderError(f"Model list request failed (HTTP {status}).")
+        body = str(getattr(response, "text", "") or "")
+        if not body:
+            try:
+                import json
+
+                body = json.dumps(response.json(), ensure_ascii=False)
+            except (ValueError, AttributeError):
+                pass
+        raise ProviderError(
+            http_error_report(
+                status,
+                body,
+                endpoint=url,
+                operation="Получение списка моделей",
+                secrets=(api_key,),
+                headers=getattr(response, "headers", None),
+            )
+        )
     try:
         data = response.json()
     except ValueError as exc:
-        raise ProviderError("The endpoint returned a non-JSON response") from exc
+        raise ProviderError(
+            "Сервер вернул список моделей не в формате JSON. Проверьте базовый URL API провайдера."
+        ) from exc
     if not isinstance(data, dict):
-        raise ProviderError("The endpoint returned unexpected JSON")
+        raise ProviderError(
+            "Сервер вернул неожиданный формат списка моделей. Проверьте совместимость API провайдера."
+        )
+    if data.get("error"):
+        import json
+
+        raise ProviderError(
+            http_error_report(
+                200,
+                json.dumps(data),
+                endpoint=url,
+                operation="Получение списка моделей",
+                secrets=(api_key,),
+            )
+        )
     items = data.get("data")
     if not isinstance(items, list):
-        raise ProviderError("The endpoint response has no model list")
+        raise ProviderError(
+            "В ответе сервера нет списка моделей. Проверьте адрес API; если сервер не поддерживает /models, укажите точный идентификатор модели вручную."
+        )
     models = sorted(
         {
             str(item.get("id"))
@@ -216,5 +255,7 @@ def fetch_models(
         }
     )
     if not models:
-        raise ProviderError("The endpoint returned an empty model list")
+        raise ProviderError(
+            "Сервер вернул пустой список моделей. Проверьте доступные модели и права API-ключа в кабинете провайдера; для локального сервера загрузите модель."
+        )
     return models

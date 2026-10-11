@@ -181,7 +181,10 @@ class BaseModsPanel(QWidget):
             QAbstractItemView.EditTrigger.NoEditTriggers
         )
         self.editor_table_view.setSelectionMode(
-            QAbstractItemView.SelectionMode.NoSelection
+            QAbstractItemView.SelectionMode.ExtendedSelection
+        )
+        self.editor_table_view.setSelectionBehavior(
+            QAbstractItemView.SelectionBehavior.SelectItems
         )
         self.editor_table_view.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAsNeeded
@@ -616,6 +619,7 @@ class BaseModsPanel(QWidget):
             object_name,
             partial(platform_specific_open, url),
         )
+        button.setProperty("copyText", url)
         return button
 
     def _create_path_link(self, path: str, object_name: str = "pathLink") -> QLabel:

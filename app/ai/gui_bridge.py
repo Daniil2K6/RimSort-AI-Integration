@@ -72,6 +72,8 @@ SUPPORTED_ACTIONS = frozenset(
         "set_filter",
         "open_workshop_item",
         "invoke_action",
+        "get_modlist",
+        "apply_modlist",
     }
 )
 
@@ -157,6 +159,7 @@ class GuiActionBridge(QObject):
         else:
             self._dispatch_signal.emit(request)
             if not request.done.wait(timeout):
+                request.done.set()  # Skip queued requests that have not started.
                 return _err(
                     "gui_timeout",
                     f"GUI action {action!r} did not acknowledge in {timeout:.1f}s.",
@@ -166,6 +169,8 @@ class GuiActionBridge(QObject):
     # -- execution (main thread) -----------------------------------------
     @Slot(object)
     def _handle(self, request: GuiRequest) -> None:
+        if request.done.is_set():
+            return
         try:
             request.result = self._execute(request.action, request.params)
         except Exception as exc:
@@ -185,6 +190,12 @@ class GuiActionBridge(QObject):
         out = dict(result)
         out.setdefault("ok", True)
         out.setdefault("action", action)
+        if action == "get_state":
+            out.setdefault("targets", list(self._targets))
+            out.setdefault("actions", list(self._actions))
+            out.setdefault(
+                "available_actions", sorted(SUPPORTED_ACTIONS & set(self._executors))
+            )
         return out
 
     # -- state -----------------------------------------------------------
@@ -197,12 +208,7 @@ class GuiActionBridge(QObject):
             "actions": list(self._actions),
             "available_actions": sorted(SUPPORTED_ACTIONS & set(self._executors)),
         }
-        get_state_exec = self._executors.get("get_state")
-        if get_state_exec is not None:
-            try:
-                state.update(get_state_exec({"detail": detail}))
-            except Exception as exc:
-                state["state_error"] = str(exc)
+        state.update(self.submit("get_state", {"detail": detail}))
         return state
 
 

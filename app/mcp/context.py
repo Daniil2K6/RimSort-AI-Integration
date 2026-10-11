@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
@@ -100,6 +101,24 @@ class MCPContext:
         self._working_ids: list[str] | None = None
         self._saved_signature: tuple[str, ...] | None = None
         self._revision: int = 0
+        self.gui_bridge: Any = None
+        self._gui_snapshot: list[str] | None = None
+
+    def _read_gui_working(self) -> list[str] | None:
+        if self.gui_bridge is None:
+            return None
+        state = self.gui_bridge.submit("get_modlist")
+        if not state.get("ok"):
+            raise MCPContextError(
+                f"GUI state unavailable: {state.get('code', 'gui_error')}"
+            )
+        if state.get("config_path") != str(self.mods_config_path.resolve()):
+            raise MCPContextError(
+                "GUI instance differs from MCP instance; select the same instance or use --headless."
+            )
+        working = [str(pid) for pid in state["working"]]
+        self._gui_snapshot = list(working)
+        return working
 
     @staticmethod
     def _default_settings_path() -> Path:
@@ -429,6 +448,30 @@ class MCPContext:
         :return: ``{"path": str, "written": int, "backup": str | None}``
         """
         package_id_list = [str(pid) for pid in package_ids]
+        if self.gui_bridge is not None:
+            if self._gui_snapshot is None:
+                self.working_ids()
+            result = self.gui_bridge.submit(
+                "apply_modlist",
+                {
+                    "config_path": str(self.mods_config_path.resolve()),
+                    "expected_working": self._gui_snapshot,
+                    "package_ids": package_id_list,
+                    "known_expansions": list(known_expansions)
+                    if known_expansions is not None
+                    else None,
+                    "backup": backup,
+                },
+            )
+            if not result.get("ok"):
+                raise MCPContextError(
+                    f"Mod-list change not confirmed: {result.get('code', 'gui_error')}. Read state before retrying."
+                )
+            self._working_ids = list(package_id_list)
+            self._gui_snapshot = list(package_id_list)
+            self._saved_signature = tuple(package_id_list)
+            self._revision += 1
+            return result
         if known_expansions is None:
             existing = self.read_active_config()
             if existing is not None:
@@ -452,7 +495,21 @@ class MCPContext:
             }
         }
         self.mods_config_path.parent.mkdir(parents=True, exist_ok=True)
-        json_to_xml_write(payload, str(self.mods_config_path), raise_errs=True)
+        # Serialize beside the destination, so failure never truncates the
+        # active config and os.replace stays on the same filesystem.
+        fd, temporary = tempfile.mkstemp(
+            prefix=".ModsConfig-", suffix=".xml", dir=self.mods_config_path.parent
+        )
+        os.close(fd)
+        try:
+            json_to_xml_write(payload, temporary, raise_errs=True)
+            with open(temporary, "rb+") as stream:
+                os.fsync(stream.fileno())
+            if self.mods_config_path.exists():
+                os.chmod(temporary, self.mods_config_path.stat().st_mode & 0o777)
+            os.replace(temporary, self.mods_config_path)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
         logger.info(
             f"Wrote {len(package_id_list)} active mods to {self.mods_config_path}"
         )
@@ -496,6 +553,11 @@ class MCPContext:
     def working_ids(self) -> list[str]:
         """Current working list (synced from disk on first use)."""
         self._detect_external_edit()
+        gui_working = self._read_gui_working()
+        if gui_working is not None:
+            if self._working_ids is not None and self._working_ids != gui_working:
+                self._revision += 1
+            self._working_ids = gui_working
         if self._working_ids is None:
             self.sync_working_from_saved()
         assert self._working_ids is not None
@@ -528,7 +590,11 @@ class MCPContext:
         Marks saved == working and refreshes the snapshot so the next
         external-edit check compares against what we just wrote.
         """
-        working = self.working_ids()
+        working = (
+            list(self._working_ids)
+            if self._working_ids is not None
+            else self.working_ids()
+        )
         result = self.write_active_config(working, backup=backup)
         self._saved_signature = tuple(working)
         return {**result, "revision": self._revision, "dirty": False}

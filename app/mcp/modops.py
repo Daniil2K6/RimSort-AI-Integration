@@ -46,6 +46,8 @@ def _require_config(ctx: MCPContext) -> ModsConfig:
             "Launch RimWorld once, or point the instance config folder "
             "at a valid RimWorld Config directory."
         )
+    if ctx.gui_bridge is not None:
+        config.activeMods = [CaseInsensitiveStr(pid) for pid in ctx.working_ids()]
     return config
 
 

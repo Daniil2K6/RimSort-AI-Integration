@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from collections.abc import AsyncIterator, Callable
 from typing import Any, NamedTuple, Protocol
 
 import aiohttp
 import requests
 
+from app.ai.errors import AIError, http_error_report, network_error_report
 from app.ai.sse import SSEParser, StreamAccumulator, _load_arguments
 from app.ai.types import AssistantReply, ToolCall
 
@@ -50,10 +52,6 @@ class _StreamCallbacks(NamedTuple):
     on_text: Callable[[str], None] | None
     should_stop: Callable[[], bool] | None
     on_event: Callable[[str, dict[str, Any]], None] | None
-
-
-class AIError(Exception):
-    """A user-facing AI API failure (network, HTTP status, malformed body)."""
 
 
 class ChatCancelled(AIError):
@@ -177,16 +175,43 @@ class AIClient:
                 self._url, json=payload, headers=headers, timeout=self._timeout
             )
         except (requests.RequestException, OSError) as exc:
-            raise AIError(f"Could not reach the AI endpoint: {exc}") from exc
+            raise AIError(
+                network_error_report(
+                    exc, endpoint=self._url, model=self._model, secrets=(self._api_key,)
+                )
+            ) from exc
         status = getattr(response, "status_code", 0)
         if status != 200:
-            raise AIError(_format_http_error(status, response))
+            raise AIError(
+                http_error_report(
+                    status,
+                    str(getattr(response, "text", "") or ""),
+                    endpoint=self._url,
+                    model=self._model,
+                    secrets=(self._api_key,),
+                    headers=getattr(response, "headers", None),
+                )
+            )
         try:
             data = response.json()
         except ValueError as exc:
-            raise AIError("The AI endpoint returned a non-JSON response") from exc
+            raise AIError(
+                "Сервер ИИ вернул ответ не в формате JSON. Проверьте базовый URL API: он должен вести к API, а не к странице сайта."
+            ) from exc
         if not isinstance(data, dict):
-            raise AIError("The AI endpoint returned unexpected JSON")
+            raise AIError(
+                "Сервер ИИ вернул неожиданный формат JSON. Проверьте совместимость сервера с Chat Completions API."
+            )
+        if data.get("error"):
+            raise AIError(
+                http_error_report(
+                    200,
+                    json.dumps(data),
+                    endpoint=self._url,
+                    model=self._model,
+                    secrets=(self._api_key,),
+                )
+            )
         return _parse_reply(data)
 
     async def _stream_coro(
@@ -209,6 +234,7 @@ class AIClient:
         try:
             async for chunk in stream(self._url, headers, payload, self._timeout):
                 for payload_str in parser.feed(chunk):
+                    self._check_stream_error(payload_str)
                     acc.feed_payload(payload_str)
                 if acc.stopped:
                     break
@@ -217,10 +243,21 @@ class AIClient:
             acc.finalize()
             self._stash_partial(acc)
             raise
-        except aiohttp.ClientError as exc:
-            raise AIError(f"Could not reach the AI endpoint: {exc}") from exc
+        except (aiohttp.ClientError, TimeoutError, OSError) as exc:
+            raise AIError(
+                network_error_report(
+                    exc, endpoint=self._url, model=self._model, secrets=(self._api_key,)
+                )
+            ) from exc
         for payload_str in parser.flush():
+            self._check_stream_error(payload_str)
             acc.feed_payload(payload_str)
+        if not acc.done and not acc.finish_reason and not stop():
+            raise AIError(
+                "Сервер ИИ прервал поток до завершения ответа. "
+                "Частичный текст сохранён на экране; инструменты из неполного ответа "
+                "не выполнены. Проверьте соединение и состояние сервиса."
+            )
         acc.finalize()
         if cbs.on_event is not None:
             cbs.on_event(
@@ -237,6 +274,23 @@ class AIClient:
             usage=acc.usage,
             incomplete_calls=acc.incomplete_calls,
         )
+
+    def _check_stream_error(self, payload: str) -> None:
+        """Providers can send error events even after HTTP 200 headers."""
+        try:
+            data = json.loads(payload)
+        except (ValueError, TypeError):
+            return
+        if isinstance(data, dict) and data.get("error"):
+            raise AIError(
+                http_error_report(
+                    200,
+                    payload,
+                    endpoint=self._url,
+                    model=self._model,
+                    secrets=(self._api_key,),
+                )
+            )
 
     def _stash_partial(self, acc: StreamAccumulator) -> None:
         """Remember partial content so a cancel can show a partial answer."""
@@ -270,8 +324,25 @@ def aiohttp_stream_factory(should_stop: Callable[[], bool]) -> StreamFn:
             session.post(url, json=payload, headers=headers) as resp,
         ):
             if resp.status != 200:
-                body = await resp.text()
-                raise AIError(_format_http_error(resp.status, _Resp(body)))
+                chunks: list[bytes] = []
+                remaining = 16_384
+                async for piece in resp.content.iter_chunked(4096):
+                    chunks.append(piece[:remaining])
+                    remaining -= len(piece)
+                    if remaining <= 0:
+                        break
+                body = b"".join(chunks).decode("utf-8", "replace")
+                token = headers.get("Authorization", "").removeprefix("Bearer ")
+                raise AIError(
+                    http_error_report(
+                        resp.status,
+                        body,
+                        endpoint=url,
+                        model=str(payload.get("model", "")),
+                        secrets=(token,),
+                        headers=resp.headers,
+                    )
+                )
             async for chunk in resp.content.iter_any():
                 if should_stop():
                     break
@@ -279,14 +350,6 @@ def aiohttp_stream_factory(should_stop: Callable[[], bool]) -> StreamFn:
                     yield chunk
 
     return _stream
-
-
-class _Resp:
-    """Tiny adapter so ``_format_http_error`` can read a status + body."""
-
-    def __init__(self, text: str) -> None:
-        self.text = text
-        self.status_code = 0
 
 
 # -- non-streaming parsing -------------------------------------------------
@@ -297,36 +360,27 @@ def _format_http_error(status: int, response: Any) -> str:
         body = str(getattr(response, "text", "") or "")
     except Exception:
         body = ""
-    detail = f" Response: {body[:300]}" if body else ""
-    if status in (401, 403):
-        return f"AI endpoint rejected the credentials (HTTP {status}).{detail}"
-    if status == 404:
-        hint = ""
-        lowered = body.lower()
-        if "slug" in lowered or "unavailable for free" in lowered:
-            hint = (
-                " The provider rejected this model id — update the model in "
-                "Settings -> AI Assistant (the response above names the "
-                "correct slug)."
-            )
-        return (
-            f"AI endpoint not found (HTTP {status}); check the base URL.{detail}{hint}"
-        )
-    if status == 429:
-        return f"AI endpoint rate limit hit (HTTP {status}).{detail}"
-    return f"AI endpoint error (HTTP {status}).{detail}"
+    return http_error_report(
+        status, body, headers=getattr(response, "headers", None)
+    ).render()
 
 
 def _parse_reply(data: dict[str, Any]) -> AssistantReply:
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
-        raise AIError(f"AI response has no choices: {str(data)[:300]}")
+        raise AIError(
+            "Ответ ИИ не содержит choices с сообщением. Проверьте совместимость выбранной модели и API с Chat Completions."
+        )
     first = choices[0]
     if not isinstance(first, dict):
-        raise AIError("AI response choice is malformed")
+        raise AIError(
+            "Сервер ИИ вернул некорректный элемент choices. Проверьте совместимость API провайдера."
+        )
     message = first.get("message")
     if not isinstance(message, dict):
-        raise AIError("AI response message is malformed")
+        raise AIError(
+            "Сервер ИИ вернул некорректное сообщение. Проверьте совместимость API провайдера."
+        )
 
     raw_content = message.get("content")
     content = raw_content if isinstance(raw_content, str) else ""

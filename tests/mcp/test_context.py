@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -16,6 +17,23 @@ from app.models.metadata.metadata_structure import (
 )
 from app.utils.app_info import AppInfo
 from tests.mcp.conftest import MCPEnv
+
+
+def test_failed_serialization_keeps_previous_config(
+    mcp_env: MCPEnv, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ctx = mcp_env.ctx
+    original = ctx.mods_config_path.read_bytes()
+
+    def fail_write(data: dict[str, Any], path: str, raise_errs: bool = False) -> None:
+        Path(path).write_text("<partial>")
+        raise OSError("serialization failed")
+
+    monkeypatch.setattr("app.mcp.context.json_to_xml_write", fail_write)
+    with pytest.raises(OSError, match="serialization failed"):
+        ctx.write_active_config(["ludeon.rimworld", "test.moda"])
+    assert ctx.mods_config_path.read_bytes() == original
+    assert not list(ctx.mods_config_path.parent.glob(".ModsConfig-*.xml"))
 
 
 def test_scan_finds_mods_and_sources(mcp_env: MCPEnv) -> None:
@@ -156,3 +174,46 @@ def test_sort_settings_defaults(mcp_env: MCPEnv) -> None:
     assert settings["sorting_algorithm"] == "Topological"
     assert settings["use_moddependencies_as_loadTheseBefore"] is False
     assert settings["use_alternative_package_ids_as_satisfying_dependencies"] is True
+
+
+def test_gui_working_list_and_guarded_commit(mcp_env: MCPEnv) -> None:
+    from app.ai.gui_bridge import GuiActionBridge
+
+    ctx = mcp_env.ctx
+    gui_ids = ["ludeon.rimworld", "test.modb"]
+    bridge = GuiActionBridge()
+    bridge.register_executor(
+        "get_modlist",
+        lambda p: {
+            "working": list(gui_ids),
+            "config_path": str(ctx.mods_config_path.resolve()),
+        },
+    )
+
+    def apply(params: dict[str, Any]) -> dict[str, Any]:
+        assert params["expected_working"] == gui_ids
+        gui_ids[:] = params["package_ids"]
+        return {"ok": True, "written": len(gui_ids), "backup": None}
+
+    bridge.register_executor("apply_modlist", apply)
+    ctx.gui_bridge = bridge
+    assert ctx.working_ids() == gui_ids
+    revision = ctx.modlist_state()["revision"]
+    gui_ids.append("test.moda")
+    assert ctx.modlist_state()["revision"] > revision
+    ctx.set_working_ids(["ludeon.rimworld", "test.moda"])
+    result = ctx.commit_working()
+    assert result["written"] == 2
+    assert gui_ids == ["ludeon.rimworld", "test.moda"]
+
+
+def test_lost_gui_never_falls_back_to_disk_write(mcp_env: MCPEnv) -> None:
+    from unittest.mock import MagicMock
+
+    ctx = mcp_env.ctx
+    original = ctx.mods_config_path.read_bytes()
+    ctx.gui_bridge = MagicMock()
+    ctx.gui_bridge.submit.return_value = {"ok": False, "code": "gui_unavailable"}
+    with pytest.raises(MCPContextError, match="GUI state unavailable"):
+        ctx.write_active_config(["ludeon.rimworld"])
+    assert ctx.mods_config_path.read_bytes() == original

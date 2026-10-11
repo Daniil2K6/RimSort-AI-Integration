@@ -7,12 +7,17 @@ from app.mcp.server import run_stdio
 
 @click.command()
 @click.option(
+    "--headless",
+    is_flag=True,
+    help="Use disk-only state even when RimSort GUI is running.",
+)
+@click.option(
     "--log-level",
     default="INFO",
     show_default=True,
     help="Stderr log level (stdout carries the MCP protocol).",
 )
-def mcp(log_level: str) -> None:
+def mcp(log_level: str, headless: bool = False) -> None:
     """Run the local RimSort MCP (Model Context Protocol) server over stdio.
 
     Exposes RimWorld mod-list management tools for AI assistants:
@@ -24,4 +29,4 @@ def mcp(log_level: str) -> None:
         rimsort mcp
         rimsort mcp --log-level DEBUG
     """
-    run_stdio(log_level)
+    run_stdio(log_level, headless=headless)

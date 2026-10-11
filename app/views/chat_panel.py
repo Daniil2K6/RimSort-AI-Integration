@@ -130,6 +130,9 @@ class ChatPanel(QWidget):
         self._store = ChatStore()
         self._session: ChatSession = self._store.new_session()
         self._worker: AgentWorker | None = None
+        self._api_messages: list[dict[str, Any]] | None = None
+        self._api_start_count = 0
+        self._session_start_count = 0
         self._ctx: MCPContext | None = None
         self._server: MCPServer | None = None
         self._dirty = True
@@ -591,16 +594,16 @@ class ChatPanel(QWidget):
                 "content": effective_system_prompt(self.settings.ai_system_prompt),
             }
         ]
-        api_messages.extend(
-            {"role": message.role, "content": message.content}
-            for message in self._session.messages
-        )
+        api_messages.extend(message.to_dict() for message in self._session.messages)
         # Stage F: keep the request within the context token budget by
         # trimming the oldest conversation turns (the system prompt is kept).
         budget = int(getattr(self.settings, "ai_context_budget_tokens", 0)) or (
             DEFAULT_CONTEXT_BUDGET_TOKENS
         )
         api_messages, _dropped = trim_messages_to_budget(api_messages, budget)
+        self._api_messages = api_messages
+        self._api_start_count = len(api_messages)
+        self._session_start_count = len(self._session.messages)
         client = AIClient(
             base_url=str(provider.get("base_url", "")),
             api_key=str(provider.get("api_key", "")),
@@ -732,13 +735,24 @@ class ChatPanel(QWidget):
             return
         if self._active_run_id is not None and event.run_id != self._active_run_id:
             return  # stale event from a finished run
+        if kind is EventKind.MESSAGE_COMPLETED:
+            self._drain_stream()
+            # Finish an intermediate explanation before the next model
+            # round starts. It must not become part of the final answer.
+            if (
+                not (event.payload or {}).get("is_final", False)
+                and self._live_turn is not None
+            ):
+                self._live_turn.finalize()
+                self._live_turn = None
+            return
         tool_kinds = {
             EventKind.APPROVAL_REQUESTED,
             EventKind.TOOL_STARTED,
             EventKind.TOOL_COMPLETED,
             EventKind.TOOL_FAILED,
         }
-        if kind not in tool_kinds:
+        if not isinstance(kind, EventKind) or kind not in tool_kinds:
             return
         status_attr = getattr(event, "status", None)
         status = getattr(status_attr, "value", None) or _KIND_DEFAULT_STATUS[kind]
@@ -797,6 +811,16 @@ class ChatPanel(QWidget):
             self._live_turn.finalize()
             self._live_turn = None
         worker = self._worker
+        # Only read the worker-owned transcript after it has stopped mutating
+        # it. Keep full local history even when the API request was compacted.
+        if self._api_messages is not None:
+            generated = self._api_messages[self._api_start_count :]
+            if generated:
+                self._session.messages[self._session_start_count :] = [
+                    ChatMessage.from_dict(message) for message in generated
+                ]
+                self._save_session()
+            self._api_messages = None
         self._worker = None
         self._set_busy(False)
         if worker is not None:

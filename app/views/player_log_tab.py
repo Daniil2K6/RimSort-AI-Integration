@@ -451,10 +451,6 @@ class PlayerLogTab(QWidget):
         self._init_left_panel()
         self._init_middle_panel()
 
-        # Add context menu action for bookmarking lines
-        self.log_display.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.log_display.customContextMenuRequested.connect(self.show_context_menu)
-
         self.horizontal_splitter = QSplitter(Qt.Orientation.Horizontal)
         self.horizontal_splitter.setObjectName("logSplitter")
         self.horizontal_splitter.setSizePolicy(
@@ -1382,7 +1378,17 @@ class PlayerLogTab(QWidget):
 
     def show_context_menu(self, pos: QPoint) -> None:
         menu = self.log_display.createStandardContextMenu()
+        menu.addSeparator()
+        copy_all = menu.addAction(self.tr("Copy all displayed text"))
+        copy_all.setEnabled(bool(self.log_display.toPlainText()))
+        copy_all.triggered.connect(
+            lambda: QApplication.clipboard().setText(self.log_display.toPlainText())
+        )
         cursor = self.log_display.cursorForPosition(pos)
+        copy_line = menu.addAction(self.tr("Copy line"))
+        copy_line.triggered.connect(
+            lambda: QApplication.clipboard().setText(cursor.block().text())
+        )
         line_number = cursor.blockNumber()
         bookmark_action_text = (
             "Remove Bookmark"

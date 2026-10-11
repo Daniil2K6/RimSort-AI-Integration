@@ -35,6 +35,8 @@ WRITE_TOOLS = frozenset(
     {
         "set_active_modlist",
         "update_modlist",
+        "apply_modlist_plan",
+        "apply_modlist_batch",
         "sort_modlist",
         "apply_modpack",
         "save_modpack",
@@ -243,7 +245,16 @@ def _stream_round(
         message_id=emitter.message_id,
         status=EventStatus.RUNNING,
     )
-    return client.chat(messages, tools=tools, on_text=on_text, should_stop=is_cancelled)
+    reply = client.chat(
+        messages, tools=tools, on_text=on_text, should_stop=is_cancelled
+    )
+    if reply.incomplete_calls and not is_cancelled():
+        raise AIError(
+            "Модель вернула некорректные аргументы инструмента. "
+            "Действия из этого ответа не выполнены. Повторите запрос или выберите "
+            "модель с надёжной поддержкой вызова инструментов."
+        )
+    return reply
 
 
 def _finish_message(emitter: EventEmitter, text: str, *, is_final: bool) -> None:
@@ -420,7 +431,11 @@ class AgentWorker(QThread):
             self.failed.emit(str(exc))
         except Exception as exc:
             logger.exception("AI chat worker crashed")
-            self.failed.emit(f"Unexpected error: {exc}")
+            self.failed.emit(
+                "Непредвиденная ошибка при работе ИИ "
+                f"({type(exc).__name__}). Повторите запрос; если ошибка повторяется, "
+                "сохраните журнал RimSort для отчёта об ошибке."
+            )
         else:
             self.finished_ok.emit(text)
 

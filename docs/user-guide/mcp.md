@@ -22,7 +22,7 @@ RimSort ships a local **MCP (Model Context Protocol) server** over stdio. It let
 
 The server is built on the official Python [MCP SDK](https://pypi.org/project/mcp/) and runs entirely on your machine. It exposes:
 
-- **18 tools** — for reading status, managing the active mod list, sorting, modpacks, importing save-game mod lists, checking and downloading Workshop updates, and launching the game
+- Tools for status, mod-list editing and validation, installation, dependencies, conflicts, logs, modpacks and launch, plus GUI tools when an in-process desktop bridge is attached. The live `tools/list` response is the authoritative catalog.
 - **2 resources** — `rimsort://status` and `rimsort://modlist/active` for lazy reads
 - **2 prompts** — guided workflows for assembling and troubleshooting mod lists
 
@@ -149,6 +149,32 @@ Modpacks are JSON snapshots stored in RimSort's saved-modlists folder. Names mus
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `launch_game` | `dry_run` | Start RimWorld (Steam protocol or direct executable, per settings). `dry_run: true` returns the launch plan without starting anything. |
+
+### Extended tools and desktop integration
+
+The server also exposes `get_modlist_state`, `preview_modlist_changes`,
+`apply_modlist_plan`, `apply_modlist_batch`, `download_workshop_mod`,
+`install_github_mod`, `resolve_dependencies`, `find_conflicts` and
+`analyze_player_log`. Read their live schemas for exact arguments and defaults.
+Preview returns a candidate list without writing; pass its current revision as
+`expected_revision` when applying a plan or batch. These apply tools write to disk.
+
+The built-in chat and external stdio server both support `get_gui_state` and
+the `gui_*` tools. Start RimSort first: `rimsort mcp` automatically attaches to
+its per-user local socket. No TCP port is exposed. Tool replies acknowledge
+actual GUI execution; a timeout is an uncertain outcome, so read state before
+retrying a write. Without a running desktop the server starts in disk-only mode.
+Use `rimsort mcp --headless` to explicitly choose disk-only operation.
+
+When attached, the working mod list is read from the desktop, including unsaved
+edits. A save checks that the GUI list and selected instance still match the
+snapshot, writes the config atomically with a backup, and updates the visible
+lists in the GUI thread. Delta edits and validation use the working list;
+`get_modlist_state` distinguishes working and saved state. Both processes must
+use the same instance/configuration; a mismatch refuses the action. If the GUI
+closes, attached tools fail explicitly rather than silently switching to disk.
+Restart the MCP process after opening or closing the desktop to change mode.
+`--attach-gui` on a second desktop launch remains a window-raising shortcut.
 
 ## Resources
 

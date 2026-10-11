@@ -40,6 +40,8 @@ READ_TOOLS = (
 WRITE_TOOLS = (
     "set_active_modlist",
     "update_modlist",
+    "apply_modlist_plan",
+    "apply_modlist_batch",
     "apply_modpack",
     "save_modpack",
     "update_mods",

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from app.ai.budget import (
     estimate_tokens,
     message_tokens,
@@ -61,3 +63,32 @@ def test_oversized_newest_message_is_kept() -> None:
     # The newest message is kept (truncated context beats empty context).
     assert trimmed[-1]["content"] == huge_newest["content"]
     assert trimmed[0]["role"] == "system"
+
+
+def test_budget_never_splits_tool_call_and_results() -> None:
+    old_turn: list[dict[str, Any]] = [
+        _msg("user", "Inspect mods"),
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "c1", "function": {"name": "list_mods", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "c1", "content": "x" * 2000},
+        _msg("assistant", "Found mods"),
+    ]
+    newest = _msg("user", "What changed?")
+    messages = [_msg("system", "sys"), *old_turn, newest]
+    trimmed, dropped = trim_messages_to_budget(messages, total_tokens(messages) - 1)
+    assert trimmed == [messages[0], newest]
+    assert dropped == len(old_turn)
+
+
+def test_tool_argument_size_counts_toward_budget() -> None:
+    small = {"role": "assistant", "tool_calls": [{"function": {"arguments": "{}"}}]}
+    large = {
+        "role": "assistant",
+        "tool_calls": [{"function": {"arguments": "x" * 8000}}],
+    }
+    assert message_tokens(large) - message_tokens(small) >= 1900

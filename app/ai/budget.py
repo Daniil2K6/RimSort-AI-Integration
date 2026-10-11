@@ -8,6 +8,7 @@ most recent, relevant exchange. The system prompt is always kept.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 #: Default context budget in approximate tokens (~32k chars).
@@ -31,9 +32,11 @@ def message_tokens(message: dict[str, Any]) -> int:
     """Approximate tokens for one chat message dict."""
     content = message.get("content") or ""
     tokens = estimate_tokens(str(content))
-    # Tool calls add a small fixed overhead per call.
+    # Arguments can contain a whole list: fixed overhead alone undercounts it.
     tool_calls = message.get("tool_calls") or []
-    tokens += 32 * len(tool_calls)
+    if tool_calls:
+        tokens += estimate_tokens(json.dumps(tool_calls, ensure_ascii=False))
+    tokens += 8
     return tokens
 
 
@@ -59,25 +62,24 @@ def trim_messages_to_budget(
     system = [m for m in messages if m.get("role") == "system"]
     conversation = [m for m in messages if m.get("role") != "system"]
 
-    kept: list[dict[str, Any]] = []
-    dropped = 0
-    # Walk newest -> oldest, keeping a suffix that fits the remaining budget.
+    # A user turn includes all assistant tool calls and their results. Drop
+    # whole turns so the API never receives an orphan result/call or loses
+    # the question that gave rise to its most recent answer.
+    groups: list[list[dict[str, Any]]] = []
+    for message in conversation:
+        if message.get("role") == "user" or not groups:
+            groups.append([])
+        groups[-1].append(message)
+    kept_groups: list[list[dict[str, Any]]] = []
     budget_left = budget_tokens - total_tokens(system)
-    for message in reversed(conversation):
-        cost = message_tokens(message)
-        if cost > budget_left and kept:
-            # Stop at the first message that no longer fits (keep pairs intact
-            # by not dropping a lone assistant reply that follows a kept user).
+    for group in reversed(groups):
+        cost = total_tokens(group)
+        if cost > budget_left and kept_groups:
             break
-        if cost > budget_left and not kept:
-            # A single oversized newest message: keep it anyway (truncated
-            # content is better than an empty context) and drop the rest.
-            kept.append(message)
-            budget_left -= cost
-            continue
-        kept.append(message)
+        # The newest turn is required even when it exceeds the estimate.
+        kept_groups.append(group)
         budget_left -= cost
-    kept.reverse()
+    kept = [message for group in reversed(kept_groups) for message in group]
     dropped = len(conversation) - len(kept)
     return system + kept, dropped
 

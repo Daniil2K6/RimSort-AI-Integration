@@ -17,6 +17,7 @@ from app.utils.dds_utility import DDSUtility
 from app.utils.gui_info import GUIInfo
 from app.utils.gui_ipc import GuiIpcServer
 from app.utils.steam.steamcmd.wrapper import SteamcmdInterface
+from app.utils.text_copy import install_text_copy_support
 from app.views.main_window import MainWindow
 from app.views.settings_dialog import SettingsDialog
 
@@ -29,6 +30,7 @@ class AppController(QObject):
         super().__init__()
 
         self.app = QApplication(sys.argv)
+        self._text_copy_support = install_text_copy_support(self.app)
         self.app.setDesktopFileName("io.github.rimsort.RimSort")
         self.app.setWindowIcon(GUIInfo().app_icon)
 
@@ -169,6 +171,7 @@ class AppController(QObject):
     def _start_gui_ipc(self) -> None:
         """Start the local IPC server that raises this window on request."""
         server = GuiIpcServer(self)
+        server.bridge = self.main_window.gui_bridge
         server.raise_requested.connect(self._on_gui_raise_requested)
         if server.start():
             self._gui_ipc = server

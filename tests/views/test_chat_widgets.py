@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QEnterEvent
 from PySide6.QtWidgets import QApplication
 
 from app.views.chat_widgets import MessageBubble, ToolCallRow
@@ -43,11 +42,12 @@ def test_tool_row_label_is_selectable_by_mouse_and_keyboard(
     row.deleteLater()
 
 
-def test_copy_button_hidden_until_hover(qapp: QApplication | QCoreApplication) -> None:
+def test_copy_button_visible_without_hover(
+    qapp: QApplication | QCoreApplication,
+) -> None:
     bubble = _bubble()
-    assert not bubble._copy_button.isVisible()
-    bubble.enterEvent(QEnterEvent(QPoint(0, 0), QPoint(0, 0), QPoint(0, 0)))
     assert bubble._copy_button.isVisible()
+    assert bubble._copy_button.focusPolicy() != Qt.FocusPolicy.NoFocus
     bubble.deleteLater()
 
 
@@ -57,17 +57,20 @@ def test_copy_button_click_copies_plain_text_to_clipboard(
     bubble = _bubble("copy me to the clipboard")
     bubble._copy_button.click()
     assert QApplication.clipboard().text() == "copy me to the clipboard"
+    assert bubble._copy_button.text() == bubble.tr("Copied")
     bubble.deleteLater()
 
 
-def test_copy_button_anchored_to_top_right_on_resize(
+def test_copy_button_does_not_cover_text_on_resize(
     qapp: QApplication | QCoreApplication,
 ) -> None:
     bubble = _bubble()
     bubble.resize(300, 80)
+    qapp.processEvents()
     button = bubble._copy_button
     assert button.x() + button.width() <= bubble.width()
     assert button.x() >= bubble.width() // 2
+    assert button.geometry().top() > bubble._label.geometry().bottom()
     bubble.deleteLater()
 
 

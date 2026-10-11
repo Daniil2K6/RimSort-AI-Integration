@@ -78,6 +78,77 @@ class _FakeWorker:
         return None
 
 
+def test_tool_transcript_survives_worker_completion_and_next_request(
+    chat_panel: ChatPanel, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.views import chat_panel as module
+
+    requests: list[list[dict[str, Any]]] = []
+
+    class Worker(_FakeWorker):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            requests.append(kwargs["messages"])
+
+        def deleteLater(self) -> None:
+            pass
+
+    monkeypatch.setattr(module, "AgentWorker", Worker)
+    _configure_model(chat_panel)
+    chat_panel.input.setPlainText("Inspect my mods")
+    chat_panel._send()
+    calls = [
+        {
+            "id": "read_1",
+            "type": "function",
+            "function": {"name": "get_status", "arguments": "{}"},
+        }
+    ]
+    requests[0].extend(
+        [
+            {"role": "assistant", "content": "Checking", "tool_calls": calls},
+            {"role": "tool", "tool_call_id": "read_1", "content": '{"mods":10}'},
+            {"role": "assistant", "content": "Ten mods"},
+        ]
+    )
+    chat_panel._on_finished_ok("Ten mods")
+    chat_panel._on_worker_finished()
+    saved = chat_panel._store.load(chat_panel._session.id)
+    assert saved is not None
+    assert [m.role for m in saved.messages] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert saved.messages[1].tool_calls == calls
+    chat_panel.input.setPlainText("What did you check?")
+    chat_panel._send()
+    assert requests[1][2]["tool_calls"] == calls
+    assert requests[1][3]["tool_call_id"] == "read_1"
+    chat_panel._worker = None
+
+
+def test_intermediate_stream_is_separate_from_final_answer(
+    chat_panel: ChatPanel,
+) -> None:
+    chat_panel._on_stream_text("Checking the list")
+    chat_panel._on_agent_event(
+        AgentEvent(
+            kind=EventKind.MESSAGE_COMPLETED,
+            run_id="r",
+            seq=1,
+            summary="Checking the list",
+            payload={"is_final": False},
+        )
+    )
+    chat_panel._on_stream_text("Final answer")
+    chat_panel._on_finished_ok("Final answer")
+    assert chat_panel._session.messages[-1].content == "Final answer"
+    turns = [w for w in chat_panel._turn_widgets if isinstance(w, AssistantTurn)]
+    assert [t.markdown_text() for t in turns] == ["Checking the list", "Final answer"]
+
+
 class TestChatPanelLayout:
     def test_starts_with_new_chat_and_visible_panels(
         self, chat_panel: ChatPanel

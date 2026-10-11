@@ -4180,6 +4180,14 @@ Alternative Dependencies:</source>
         <source>Pick Highlight Color</source>
         <translation>Выберите цвет подсветки</translation>
     </message>
+    <message>
+        <source>Copy all displayed text</source>
+        <translation>Копировать весь отображаемый текст</translation>
+    </message>
+    <message>
+        <source>Copy line</source>
+        <translation>Копировать строку</translation>
+    </message>
 </context>
 <context>
     <name>Rentry Auth Code Not Found </name>
@@ -6403,6 +6411,40 @@ The following table displays Workshop mods available for update from Steam.</sou
     <message>
         <source>RimSort was unable to read the supplied mods list because it may be invalid or missing.</source>
         <translation>RimSort не смог прочитать указанный список модов, так как он может быть недействительным или отсутствовать.</translation>
+    </message>
+</context>
+<context>
+    <name>MessageBubble</name>
+    <message>
+        <source>Copy</source>
+        <translation>Копировать</translation>
+    </message>
+    <message>
+        <source>Copy message</source>
+        <translation>Копировать сообщение</translation>
+    </message>
+    <message>
+        <source>Copied</source>
+        <translation>Скопировано</translation>
+    </message>
+    <message>
+        <source>Copy Markdown</source>
+        <translation>Копировать Markdown</translation>
+    </message>
+    <message>
+        <source>Edit &amp; Resend</source>
+        <translation>Изменить и отправить</translation>
+    </message>
+    <message>
+        <source>Regenerate</source>
+        <translation>Повторить ответ</translation>
+    </message>
+</context>
+<context>
+    <name>TextCopySupport</name>
+    <message>
+        <source>Copy</source>
+        <translation>Копировать</translation>
     </message>
 </context>
 </TS>

@@ -122,7 +122,7 @@ def test_fetch_models_http_error() -> None:
     def fake_get(url: str, **kwargs: Any) -> _FakeResponse:
         return _FakeResponse(401, {})
 
-    with pytest.raises(ProviderError, match="HTTP 401"):
+    with pytest.raises(ProviderError, match="HTTP: 401"):
         fetch_models("https://api.example/v1", get=fake_get)
 
 

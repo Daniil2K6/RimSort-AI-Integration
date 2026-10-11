@@ -151,10 +151,10 @@ def test_chat_parses_tool_calls_with_json_arguments() -> None:
 @pytest.mark.parametrize(
     ("status_code", "expected"),
     [
-        (401, "credentials"),
-        (404, "base URL"),
-        (429, "rate limit"),
-        (500, "HTTP 500"),
+        (401, "API-ключ не принят"),
+        (404, "Адрес API или ресурс не найден"),
+        (429, "Достигнут лимит запросов"),
+        (500, "HTTP: 500"),
     ],
 )
 def test_chat_maps_http_errors_to_ai_error(status_code: int, expected: str) -> None:
@@ -173,24 +173,24 @@ def test_chat_reports_network_failure() -> None:
     post, _ = make_recorder(error=requests.ConnectionError("refused"))
     client = make_client(post)
 
-    with pytest.raises(AIError, match="Could not reach"):
+    with pytest.raises(AIError, match="Не удалось подключиться"):
         client.chat([{"role": "user", "content": "hi"}])
 
 
 def test_chat_rejects_non_json_and_missing_choices() -> None:
     post, _ = make_recorder(FakeResponse(bad_json=True, text="<html>"))
     client = make_client(post)
-    with pytest.raises(AIError, match="non-JSON"):
+    with pytest.raises(AIError, match="не в формате JSON"):
         client.chat([{"role": "user", "content": "hi"}])
 
     post, _ = make_recorder(FakeResponse(data={"oops": 1}))
     client = make_client(post)
-    with pytest.raises(AIError, match="no choices"):
+    with pytest.raises(AIError, match="не содержит choices"):
         client.chat([{"role": "user", "content": "hi"}])
 
     post, _ = make_recorder(FakeResponse(data=[1, 2, 3]))
     client = make_client(post)
-    with pytest.raises(AIError, match="unexpected JSON"):
+    with pytest.raises(AIError, match="неожиданный формат JSON"):
         client.chat([{"role": "user", "content": "hi"}])
 
 

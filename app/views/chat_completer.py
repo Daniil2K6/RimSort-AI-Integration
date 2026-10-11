@@ -222,10 +222,11 @@ def build_mod_labels(mods_metadata: object) -> list[str]:
 
     labels: list[str] = []
     seen: set[str] = set()
-    items = getattr(mods_metadata, "items", None)
-    if not callable(items):
+    from collections.abc import Mapping
+
+    if not isinstance(mods_metadata, Mapping):
         return labels
-    for _path, mod in items():
+    for mod in mods_metadata.values():
         if not isinstance(mod, AboutXmlMod):
             continue
         name = mod.name if isinstance(mod.name, str) else ""

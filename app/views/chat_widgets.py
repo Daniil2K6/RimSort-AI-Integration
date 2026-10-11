@@ -11,15 +11,12 @@ from __future__ import annotations
 
 from html import escape
 
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
+from PySide6.QtCore import QPoint, Qt, QTimer, Signal
 from PySide6.QtGui import (
     QColor,
-    QCursor,
-    QEnterEvent,
     QPainter,
     QPaintEvent,
     QPalette,
-    QResizeEvent,
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
@@ -41,8 +38,8 @@ class MessageBubble(QFrame):
 
     User messages render as bold plain text; assistant and error
     messages render Markdown through the bubble's own document. The
-    text is selectable with the mouse (and keyboard), a small copy
-    button fades in on hover for one-click copying, and right-clicking
+    text is selectable with the mouse (and keyboard), a persistent copy
+    button below the text offers one-click copying, and right-clicking
     a bubble offers Copy (the selection when one exists, otherwise the
     whole text) and — when the panel enables them — Edit & Resend
     (last user message) and Regenerate (last assistant reply).
@@ -66,6 +63,8 @@ class MessageBubble(QFrame):
         self._background = QColor(background)
         self._editable = False
         self._regenerable = False
+        self._source_text = ""
+        self._is_markdown = markdown
         self._document = QTextDocument(self)
         self._document.setDocumentMargin(2)
 
@@ -79,61 +78,43 @@ class MessageBubble(QFrame):
         self._label.setOpenExternalLinks(True)
         self._label.setWordWrap(True)
         self._apply_selection_palette()
-        layout = QHBoxLayout(self)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 5, 10, 5)
         layout.addWidget(self._label)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+        self._label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._label.customContextMenuRequested.connect(
+            lambda pos: self._show_context_menu(self._label.mapTo(self, pos))
+        )
 
         self._copy_button = QPushButton(self.tr("Copy"), self)
         self._copy_button.setObjectName("MessageBubbleCopyButton")
-        self._copy_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._copy_button.setAccessibleName(self.tr("Copy message"))
         self._copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self._copy_button.setStyleSheet(
-            "QPushButton { background: rgba(0, 0, 0, 70); color: #ffffff;"
+            f"QPushButton {{ background: transparent; color: {text_color};"
             " border: none; border-radius: 3px; padding: 2px 6px;"
-            " font-size: 10px; }"
-            "QPushButton:hover { background: rgba(0, 0, 0, 120); }"
+            " font-size: 11px; }"
+            "QPushButton:hover { background: rgba(128, 128, 128, 35); }"
         )
         self._copy_button.clicked.connect(self._copy_to_clipboard)
-        self._copy_button.hide()
-        self.installEventFilter(self)
-        self._copy_button.installEventFilter(self)
-
-    # ---------------------------------------------------------- copy button
-    def enterEvent(self, event: QEnterEvent) -> None:
-        """Reveal the one-copy button while the pointer is over the bubble."""
-        super().enterEvent(event)
-        self._position_copy_button()
-        self._copy_button.show()
-
-    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        """Hide the copy button once the pointer truly leaves the bubble.
-
-        Moving from the bubble onto its child copy button also fires a
-        ``Leave`` for the frame, so only hide when the cursor is outside
-        the bubble's rectangle (i.e. not resting on the button).
-        """
-        if (
-            obj in (self, self._copy_button)
-            and event.type() == QEvent.Type.Leave
-            and not self.rect().contains(self.mapFromGlobal(QCursor.pos()))
-        ):
-            self._copy_button.hide()
-        return super().eventFilter(obj, event)
-
-    def resizeEvent(self, event: QResizeEvent) -> None:
-        """Keep the copy button anchored to the top-right corner."""
-        super().resizeEvent(event)
-        self._position_copy_button()
-
-    def _position_copy_button(self) -> None:
-        size = self._copy_button.size()
-        self._copy_button.move(self.width() - size.width() - 6, 4)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        actions.addWidget(self._copy_button)
+        layout.addLayout(actions)
+        self._copy_feedback_timer = QTimer(self)
+        self._copy_feedback_timer.setSingleShot(True)
+        self._copy_feedback_timer.setInterval(1500)
+        self._copy_feedback_timer.timeout.connect(
+            lambda: self._copy_button.setText(self.tr("Copy"))
+        )
 
     def _copy_to_clipboard(self) -> None:
         """Copy the bubble's full text to the clipboard (one click)."""
         QApplication.clipboard().setText(self.plain_text())
+        self._copy_button.setText(self.tr("Copied"))
+        self._copy_feedback_timer.start()
 
     def paintEvent(self, event: QPaintEvent) -> None:
         """Draw the rounded tinted background without a stylesheet.
@@ -156,12 +137,16 @@ class MessageBubble(QFrame):
         Goes through the bubble's document like Markdown does: setting a
         stylesheet on the label would break QLabel's word wrap (Qt quirk).
         """
+        self._source_text = text
+        self._is_markdown = False
         self._document.setHtml(f"<b>{escape(text).replace(chr(10), '<br>')}</b>")
         self._recolor()
         self._label.setText(self._document.toHtml())
 
     def set_markdown(self, text: str) -> None:
         """Render ``text`` as Markdown in the bubble's text color."""
+        self._source_text = text
+        self._is_markdown = True
         self._document.setMarkdown(text)
         self._recolor()
         self._label.setText(self._document.toHtml())
@@ -215,6 +200,9 @@ class MessageBubble(QFrame):
         menu = QMenu(self)
         copy_action = menu.addAction(self.tr("Copy"))
         copy_action.setEnabled(bool(selected or self.plain_text()))
+        markdown_action = (
+            menu.addAction(self.tr("Copy Markdown")) if self._is_markdown else None
+        )
         edit_action = (
             menu.addAction(self.tr("Edit & Resend")) if self._editable else None
         )
@@ -226,6 +214,8 @@ class MessageBubble(QFrame):
             QApplication.clipboard().setText(
                 selected if selected else self.plain_text()
             )
+        elif markdown_action is not None and chosen is markdown_action:
+            QApplication.clipboard().setText(self._source_text)
         elif edit_action is not None and chosen is edit_action:
             self.edit_requested.emit()
         elif regenerate_action is not None and chosen is regenerate_action:

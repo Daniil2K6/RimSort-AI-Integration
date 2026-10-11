@@ -1,6 +1,7 @@
 import os
 from collections.abc import Callable
 from functools import partial
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -337,6 +338,8 @@ class MainWindow(QMainWindow):
         bridge.register_executor("set_filter", self._gui_set_filter)
         bridge.register_executor("open_workshop_item", self._gui_open_workshop_item)
         bridge.register_executor("invoke_action", self._gui_invoke_action)
+        bridge.register_executor("get_modlist", self._gui_get_modlist)
+        bridge.register_executor("apply_modlist", self._gui_apply_modlist)
 
         bridge.set_capabilities(
             targets=[
@@ -349,6 +352,59 @@ class MainWindow(QMainWindow):
             actions=sorted(INVOKE_ALLOWLIST),
         )
         return bridge
+
+    def _gui_get_modlist(self, params: dict[str, Any]) -> dict[str, Any]:
+        panel = self.main_content_panel
+        data = panel._import_export_service.collect_active_mods(
+            panel.mods_panel.active_mods_list.paths, panel.duplicate_mods
+        )
+        instance = self.settings.instances[self.settings.current_instance]
+        return {
+            "ok": True,
+            "working": list(data.active_mods),
+            "instance": self.settings.current_instance,
+            "config_path": str(
+                (Path(instance.config_folder) / "ModsConfig.xml").resolve()
+            ),
+        }
+
+    def _gui_apply_modlist(self, params: dict[str, Any]) -> dict[str, Any]:
+        """Compare, persist and render in one main-thread transaction."""
+        from app.mcp.context import MCPContext
+
+        state = self._gui_get_modlist({})
+        if params.get("config_path") != state["config_path"]:
+            return {"ok": False, "code": "gui_instance_mismatch"}
+        if params.get("expected_working") != state["working"]:
+            return {
+                "ok": False,
+                "code": "revision_conflict",
+                "error": "Список в окне изменился. Получите состояние и обновите план.",
+            }
+        ids = params.get("package_ids")
+        if not isinstance(ids, list) or not all(isinstance(pid, str) for pid in ids):
+            return {"ok": False, "code": "invalid_modlist"}
+        panel = self.main_content_panel
+        active, inactive, duplicates, missing = (
+            panel.metadata_controller.get_mods_from_list(mod_list=ids)
+        )
+        # Unknown entries are preserved in the disk file, never trigger a modal
+        # download prompt from an unattended MCP request.
+        ctx = MCPContext()
+        if str(ctx.mods_config_path.resolve()) != state["config_path"]:
+            return {"ok": False, "code": "gui_instance_mismatch"}
+        result = ctx.write_active_config(
+            ids,
+            known_expansions=params.get("known_expansions"),
+            backup=bool(params.get("backup", True)),
+        )
+        panel.duplicate_mods = duplicates
+        panel.missing_mods = missing
+        panel.mods_panel.reset_all_filters_and_search("Active")
+        panel.mods_panel.reset_all_filters_and_search("Inactive")
+        panel._insert_data_into_lists(active, inactive)
+        panel.active_mods_uuids_last_save = list(active)
+        return {"ok": True, **result, "gui_updated": True, "gui_missing": missing}
 
     def _gui_tab_widget_for(self, target: str) -> QWidget | None:
         """Map a stable SurfaceId to its real tab widget (no label matching)."""
@@ -381,10 +437,22 @@ class MainWindow(QMainWindow):
                 item = mod_list.item(row)
                 if item is None:
                     continue
-                data = item.data(Qt.ItemDataRole.UserRole)
-                if isinstance(data, dict) and data.get("packageid") == package_id:
+                if (
+                    self._gui_item_package_id(item) or ""
+                ).lower() == package_id.lower():
                     return mod_list, item
         return None, None
+
+    def _gui_item_package_id(self, item: Any) -> str | None:
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(data, dict):
+            return data.get("packageid")
+        path = getattr(data, "path", None)
+        if path:
+            mod = self.main_content_panel.metadata_controller.get_mod(path)
+            pid = getattr(mod, "package_id", None)
+            return str(pid) if pid is not None else None
+        return None
 
     def _gui_select_mod(self, params: dict[str, Any]) -> dict[str, Any]:
         package_id = str(params.get("package_id", ""))
@@ -399,6 +467,13 @@ class MainWindow(QMainWindow):
                 "error": package_id,
             }
         mod_list.setCurrentItem(item)
+        if reveal and item.isHidden():
+            list_name = (
+                "Active"
+                if mod_list is self.main_content_panel.mods_panel.active_mods_list
+                else "Inactive"
+            )
+            self.main_content_panel.mods_panel.reset_all_filters_and_search(list_name)
         mod_list.scrollToItem(item)
         mod_list.setFocus(Qt.FocusReason.OtherFocusReason)
         self._gui_highlight_list(mod_list)
@@ -458,9 +533,7 @@ class MainWindow(QMainWindow):
         selected_item = active.currentItem() or inactive.currentItem()
         selected_pkg = None
         if selected_item is not None:
-            data = selected_item.data(Qt.ItemDataRole.UserRole)
-            if isinstance(data, dict):
-                selected_pkg = data.get("packageid")
+            selected_pkg = self._gui_item_package_id(selected_item)
         return {
             "visible_tab": self.tab_widget.tabText(current),
             "active_count": active.count(),

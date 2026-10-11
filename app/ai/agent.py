@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import threading
+import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,7 @@ from loguru import logger
 from PySide6.QtCore import QThread, Signal, Slot
 
 from app.ai.client import AIError, AssistantReply, ChatClient, ToolCall
+from app.ai.events import AgentEvent, EventEmitter, EventKind, EventStatus
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -137,6 +139,7 @@ def run_agent(
     emit: Callable[[str], None],
     is_cancelled: Callable[[], bool],
     on_text: Callable[[str], None] | None = None,
+    on_event: Callable[[AgentEvent], None] | None = None,
     max_rounds: int = MAX_ROUNDS,
 ) -> str:
     """Run the chat loop until the model stops asking for tools.
@@ -145,18 +148,41 @@ def run_agent(
     the chat panel can reuse the full transcript on the next turn. When
     `on_text` is given, the client streams and every content delta is
     forwarded to it as it arrives.
+
+    Each round is one assistant *message* with a stable ``message_id`` and
+    an incrementing ``round_id``. A ``MESSAGE_COMPLETED`` event carries the
+    round's text plus ``is_final`` so the GUI can render intermediate
+    (tool-calling) turns separately from the final answer (Stage A.4).
     """
+    emitter = EventEmitter(uuid.uuid4().hex, sink=on_event)
+    emitter.emit(EventKind.RUN_STARTED, status=EventStatus.RUNNING)
     tools = build_agent_tools(server)
-    for _ in range(max_rounds):
+    for round_index in range(max_rounds):
         if is_cancelled():
+            emitter.emit(EventKind.RUN_CANCELLED, status=EventStatus.CANCELLED)
             return CANCELLED_TEXT
-        reply = client.chat(
-            messages, tools=tools, on_text=on_text, should_stop=is_cancelled
+        reply = _stream_round(
+            client=client,
+            messages=messages,
+            tools=tools,
+            is_cancelled=is_cancelled,
+            on_text=on_text,
+            emitter=emitter,
+            round_index=round_index,
         )
+        if is_cancelled():
+            emitter.emit(EventKind.RUN_CANCELLED, status=EventStatus.CANCELLED)
+            return CANCELLED_TEXT
         if not reply.tool_calls:
-            text = reply.content
-            messages.append({"role": "assistant", "content": text})
-            return text
+            _finish_message(emitter, reply.content, is_final=True)
+            emitter.emit(
+                EventKind.RUN_COMPLETED,
+                reply.content,
+                status=EventStatus.SUCCEEDED,
+            )
+            messages.append({"role": "assistant", "content": reply.content})
+            return reply.content
+        _finish_message(emitter, reply.content, is_final=False)
         messages.append(_assistant_tool_message(reply))
         for call in reply.tool_calls:
             payload = _resolve_call(
@@ -165,6 +191,7 @@ def run_agent(
                 confirm=confirm,
                 emit=emit,
                 is_cancelled=is_cancelled,
+                emitter=emitter,
             )
             messages.append(
                 {
@@ -174,10 +201,57 @@ def run_agent(
                 }
             )
     # Out of rounds: ask once more without tools so the model can summarise.
-    reply = client.chat(messages, tools=None, on_text=on_text, should_stop=is_cancelled)
+    if is_cancelled():
+        emitter.emit(EventKind.RUN_CANCELLED, status=EventStatus.CANCELLED)
+        return CANCELLED_TEXT
+    reply = _stream_round(
+        client=client,
+        messages=messages,
+        tools=None,
+        is_cancelled=is_cancelled,
+        on_text=on_text,
+        emitter=emitter,
+        round_index=max_rounds,
+    )
     text = reply.content
+    _finish_message(emitter, text, is_final=True)
+    emitter.emit(EventKind.RUN_COMPLETED, text, status=EventStatus.SUCCEEDED)
     messages.append({"role": "assistant", "content": text})
     return text
+
+
+def _stream_round(
+    *,
+    client: ChatClient,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    is_cancelled: Callable[[], bool],
+    on_text: Callable[[str], None] | None,
+    emitter: EventEmitter,
+    round_index: int,
+) -> AssistantReply:
+    """Run one chat completion, tagging it with a round/message id."""
+    emitter.round_id = round_index
+    emitter.message_id = uuid.uuid4().hex[:12]
+    emitter.emit(
+        EventKind.MESSAGE_STARTED,
+        round_id=round_index,
+        message_id=emitter.message_id,
+        status=EventStatus.RUNNING,
+    )
+    return client.chat(messages, tools=tools, on_text=on_text, should_stop=is_cancelled)
+
+
+def _finish_message(emitter: EventEmitter, text: str, *, is_final: bool) -> None:
+    """Emit MESSAGE_COMPLETED so the GUI can split intermediate vs final."""
+    emitter.emit(
+        EventKind.MESSAGE_COMPLETED,
+        text,
+        round_id=emitter.round_id,
+        message_id=emitter.message_id,
+        status=EventStatus.SUCCEEDED,
+        payload={"is_final": is_final, "chars": len(text)},
+    )
 
 
 def _assistant_tool_message(reply: AssistantReply) -> dict[str, Any]:
@@ -205,19 +279,48 @@ def _resolve_call(
     confirm: Callable[[str], bool],
     emit: Callable[[str], None],
     is_cancelled: Callable[[], bool],
+    emitter: EventEmitter | None = None,
 ) -> dict[str, Any]:
     pretty = summarize_args(call.name, call.arguments)
     if is_cancelled():
         return {"error": "cancelled"}
     if requires_confirmation(call.name, call.arguments):
         emit(f"… {pretty}")
+        _emit_tool(
+            emitter, EventKind.APPROVAL_REQUESTED, call, pretty, EventStatus.REQUESTED
+        )
         if not confirm(pretty):
+            if is_cancelled():
+                return {"error": "cancelled"}
             emit(f"✗ {pretty} — declined")
+            _emit_tool(
+                emitter, EventKind.TOOL_FAILED, call, pretty, EventStatus.DECLINED
+            )
             return {"error": "Declined by user"}
         emit(f"→ {pretty}")
+        _emit_tool(emitter, EventKind.TOOL_STARTED, call, pretty, EventStatus.RUNNING)
         return call_tool_payload(server, call.name, call.arguments)
     emit(f"→ {pretty}")
+    _emit_tool(emitter, EventKind.TOOL_STARTED, call, pretty, EventStatus.RUNNING)
     return call_tool_payload(server, call.name, call.arguments)
+
+
+def _emit_tool(
+    emitter: EventEmitter | None,
+    kind: EventKind,
+    call: ToolCall,
+    pretty: str,
+    status: EventStatus,
+) -> None:
+    if emitter is None:
+        return
+    emitter.emit(
+        kind,
+        pretty,
+        status=status,
+        tool_call_id=call.id,
+        payload={"tool": call.name},
+    )
 
 
 class AgentWorker(QThread):
@@ -250,8 +353,20 @@ class AgentWorker(QThread):
         self._confirm_answer = False
 
     def request_cancel(self) -> None:
-        """Ask the loop to stop at the next safe point."""
+        """Ask the loop to stop now, not at the next safe point only.
+
+        Unblocks a worker waiting in ``_confirm`` and aborts any in-flight
+        network read via the client, so cancel lands within ~2s (Stage A.5).
+        """
         self._cancel.set()
+        # Unblock a worker parked in _confirm (treat as declined for now;
+        # the is_cancelled check reclassifies it as cancelled).
+        self._confirm_answer = False
+        self._confirm_event.set()
+        # Abort a blocked streaming read if the client supports it.
+        cancel = getattr(self._client, "cancel", None)
+        if callable(cancel):
+            cancel()
 
     @Slot(bool)
     def resolve_confirmation(self, approved: bool) -> None:
@@ -281,6 +396,8 @@ class AgentWorker(QThread):
             self.finished_ok.emit(text)
 
     def _confirm(self, pretty: str) -> bool:
+        if self._cancel.is_set():
+            return False
         self._confirm_event.clear()
         self.confirm_requested.emit(pretty)
         if not self._confirm_event.wait(timeout=CONFIRM_TIMEOUT_S):

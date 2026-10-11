@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -138,11 +139,13 @@ def test_chat_parses_tool_calls_with_json_arguments() -> None:
     reply = client.chat([{"role": "user", "content": "go"}])
 
     assert reply.content == ""
+    # Malformed arguments never degrade to {}: they are reported separately
+    # so the agent surfaces an error instead of executing an empty call.
     assert reply.tool_calls == [
         ToolCall("call_1", "get_status", {"refresh": True}),
-        ToolCall("call_2", "list_mods", {}),
         ToolCall("call_3", "validate_modlist", {"severity": "warning"}),
     ]
+    assert reply.incomplete_calls == [ToolCall("call_2", "list_mods", {})]
 
 
 @pytest.mark.parametrize(
@@ -205,15 +208,42 @@ def test_tool_call_arguments_accept_dict_or_string() -> None:
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
-    return f"data: {json.dumps(payload)}".encode()
+    """One complete, blank-line-terminated SSE event (as OpenAI sends)."""
+    return f"data: {json.dumps(payload)}\n\n".encode()
+
+
+def make_stream_factory(
+    chunks: list[bytes], error: Exception | None = None
+) -> tuple[Any, list[dict[str, Any]]]:
+    """Return an async stream factory that records the request and replays."""
+    calls: list[dict[str, Any]] = []
+
+    def factory(should_stop: Any) -> Any:
+        async def _stream(
+            url: str, headers: dict[str, str], payload: dict[str, Any], timeout: Any
+        ) -> AsyncIterator[bytes]:
+            calls.append({"url": url, "headers": headers, "json": payload})
+            if error is not None:
+                raise error
+            for chunk in chunks:
+                yield chunk
+
+        return _stream
+
+    return factory, calls
 
 
 def _run_stream(
     lines: list[bytes], should_stop: Any = None
 ) -> tuple[list[str], Any, list[dict[str, Any]]]:
-    """Stream fake SSE lines through a real client; return seen/reply/calls."""
-    post, calls = make_recorder(FakeResponse(lines=lines))
-    client = make_client(post)
+    """Stream fake SSE chunks through a real client; return seen/reply/calls."""
+    factory, calls = make_stream_factory(lines)
+    client = AIClient(
+        base_url="https://api.example.test/v1/",
+        api_key="sk-unit-test",
+        model="test-model",
+        stream_factory=factory,
+    )
     seen: list[str] = []
     reply = client.chat(
         [{"role": "user", "content": "hi"}],
@@ -228,7 +258,7 @@ def test_streaming_forwards_deltas_and_sets_stream_flag() -> None:
     lines = [
         _sse({"choices": [{"delta": {"content": "he"}}]}),
         _sse({"choices": [{"delta": {"content": "llo"}}]}),
-        b"data: [DONE]",
+        b"data: [DONE]\n\n",
     ]
 
     seen, reply, calls = _run_stream(lines)
@@ -278,7 +308,7 @@ def test_streaming_assembles_fragmented_tool_calls() -> None:
                 ]
             }
         ),
-        b"data: [DONE]",
+        b"data: [DONE]\n\n",
     ]
 
     _, reply, _ = _run_stream(lines)
@@ -291,12 +321,45 @@ def test_streaming_assembles_fragmented_tool_calls() -> None:
     assert call.arguments == {"query": "ce"}
 
 
+def test_streaming_reports_malformed_tool_args_instead_of_empty() -> None:
+    """A tool call whose arguments never parse is reported, not executed."""
+    lines = [
+        _sse(
+            {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": 0,
+                                    "id": "call_x",
+                                    "function": {
+                                        "name": "delete_mod",
+                                        "arguments": "{not json",
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+        b"data: [DONE]\n\n",
+    ]
+
+    _, reply, _ = _run_stream(lines)
+
+    assert reply.tool_calls == []
+    assert len(reply.incomplete_calls) == 1
+    assert reply.incomplete_calls[0].name == "delete_mod"
+
+
 def test_streaming_should_stop_breaks_early() -> None:
     """should_stop aborts the stream between chunks."""
     lines = [
         _sse({"choices": [{"delta": {"content": "first"}}]}),
         _sse({"choices": [{"delta": {"content": "second"}}]}),
-        b"data: [DONE]",
+        b"data: [DONE]\n\n",
     ]
     budget = [1]
 
@@ -310,17 +373,91 @@ def test_streaming_should_stop_breaks_early() -> None:
     assert reply.content == "first"
 
 
+def test_streaming_handles_split_utf8_and_crlf() -> None:
+    """A multi-byte char split across chunks and CRLF endings decode fine."""
+    event = 'data: {"choices": [{"delta": {"content": "б"}}]}\n\n'.encode()
+    split = [event[:20], event[20:]]  # split inside the multi-byte char
+    lines = split + [b"data: [DONE]\r\n\r\n"]
+
+    seen, reply, _ = _run_stream(lines)
+
+    assert seen == ["б"]
+    assert reply.content == "б"
+
+
 def test_streaming_skips_malformed_chunks() -> None:
     """Malformed SSE lines never break the stream."""
     lines = [
-        b"data: {not json",
-        b"event: ping",
+        b"data: {not json\n\n",
+        b"event: ping\n\n",
+        b": heartbeat\n\n",
         _sse({"choices": []}),
         _sse({"choices": [{"delta": {"content": "ok"}}]}),
-        b"data: [DONE]",
+        b"data: [DONE]\n\n",
     ]
 
     seen, reply, _ = _run_stream(lines)
 
     assert seen == ["ok"]
     assert reply.content == "ok"
+
+
+def test_streaming_captures_usage_only_chunk() -> None:
+    """A trailing usage-only chunk (no choices) still records token usage."""
+    lines = [
+        _sse({"choices": [{"delta": {"content": "hi"}}]}),
+        _sse({"choices": [], "usage": {"prompt_tokens": 5, "completion_tokens": 1}}),
+        b"data: [DONE]\n\n",
+    ]
+
+    _, reply, _ = _run_stream(lines)
+
+    assert reply.content == "hi"
+    assert reply.usage == {"prompt_tokens": 5, "completion_tokens": 1}
+
+
+def test_cancel_aborts_blocked_stream_within_budget() -> None:
+    """cancel() interrupts a blocked read from another thread and keeps
+    the partial answer (Stage A.5)."""
+    import asyncio
+    import threading
+    import time
+
+    started = threading.Event()
+
+    def factory(should_stop: Any) -> Any:
+        async def _stream(
+            url: str, headers: dict[str, str], payload: dict[str, Any], timeout: Any
+        ) -> AsyncIterator[bytes]:
+            yield _sse({"choices": [{"delta": {"content": "partial"}}]})
+            started.set()
+            # Block forever until the task is cancelled.
+            await asyncio.Event().wait()
+
+        return _stream
+
+    client = AIClient(
+        base_url="https://api.example.test/v1/",
+        api_key="sk",
+        model="m",
+        stream_factory=factory,
+    )
+    result: dict[str, Any] = {}
+
+    def run() -> None:
+        result["reply"] = client.chat(
+            [{"role": "user", "content": "hi"}], on_text=lambda _t: None
+        )
+
+    worker = threading.Thread(target=run)
+    start = time.monotonic()
+    worker.start()
+    assert started.wait(2.0), "stream never started"
+    time.sleep(0.05)
+    client.cancel()
+    worker.join(timeout=2.0)
+    elapsed = time.monotonic() - start
+
+    assert not worker.is_alive(), "cancel did not unblock the worker"
+    assert elapsed < 2.0
+    assert result["reply"].content == "partial"

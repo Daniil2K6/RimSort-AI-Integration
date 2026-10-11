@@ -9,6 +9,7 @@ from typing import Any
 from app.ai.agent import (
     CANCELLED_TEXT,
     MAX_ROUNDS,
+    AgentWorker,
     build_agent_tools,
     call_tool_payload,
     requires_confirmation,
@@ -16,6 +17,7 @@ from app.ai.agent import (
     summarize_args,
 )
 from app.ai.client import AssistantReply, ToolCall
+from app.ai.events import AgentEvent, EventKind
 from app.mcp.context import MCPContext
 from app.mcp.modops import current_active_ids
 from app.mcp.server import build_server
@@ -53,6 +55,7 @@ class ScriptedClient:
         self.seen_messages: list[list[dict[str, Any]]] = []
         self.seen_tools: list[list[dict[str, Any]] | None] = []
         self.seen_on_text: list[Any] = []
+        self.after_chat: Callable[[], None] | None = None
 
     def chat(
         self,
@@ -66,7 +69,10 @@ class ScriptedClient:
         self.seen_on_text.append(on_text)
         if not self._replies:
             raise AssertionError("ScriptedClient ran out of replies")
-        return self._replies.pop(0)
+        reply = self._replies.pop(0)
+        if self.after_chat is not None:
+            self.after_chat()
+        return reply
 
 
 def run_scripted(
@@ -277,3 +283,83 @@ def test_summarize_args_caps_length() -> None:
     assert summary.endswith("...)")
     assert len(summary) < 140
     assert summarize_args("get_status", {}) == "get_status()"
+
+
+def test_run_agent_emits_message_boundaries(mcp_env: MCPEnv) -> None:
+    """Intermediate rounds are marked is_final=False, the last one True."""
+    events: list[AgentEvent] = []
+    client = ScriptedClient(
+        [
+            AssistantReply("", [ToolCall("c1", "get_status", {"refresh": False})]),
+            AssistantReply("done", []),
+        ]
+    )
+    run_agent(
+        client=client,
+        server=build_server(mcp_env.ctx),
+        messages=[{"role": "user", "content": "hi"}],
+        confirm=lambda pretty: True,
+        emit=lambda line: None,
+        is_cancelled=lambda: False,
+        on_event=events.append,
+    )
+
+    kinds = [e.kind for e in events]
+    assert kinds[0] == EventKind.RUN_STARTED
+    assert kinds[-1] == EventKind.RUN_COMPLETED
+    completed = [e for e in events if e.kind == EventKind.MESSAGE_COMPLETED]
+    assert len(completed) == 2
+    assert completed[0].payload["is_final"] is False  # tool-calling round
+    assert completed[1].payload["is_final"] is True  # final answer
+    assert completed[0].round_id == 0
+    assert completed[1].round_id == 1
+    assert completed[0].message_id != completed[1].message_id
+    # Tool calls are correlated by tool_call_id.
+    tool_events = [e for e in events if e.kind == EventKind.TOOL_STARTED]
+    assert tool_events and tool_events[0].tool_call_id == "c1"
+
+
+def test_run_agent_cancelled_mid_run_returns_cancelled_text(mcp_env: MCPEnv) -> None:
+    """Cancelling after the first round stops before the final answer."""
+    events: list[AgentEvent] = []
+    cancel_flag = {"on": False}
+
+    client = ScriptedClient(
+        [
+            AssistantReply("", [ToolCall("c1", "get_status", {"refresh": False})]),
+            AssistantReply("should not appear", []),
+        ]
+    )
+    # Flip the cancel flag as soon as the first (tool) round returns.
+    client.after_chat = lambda: cancel_flag.__setitem__("on", True)
+    text = run_agent(
+        client=client,
+        server=build_server(mcp_env.ctx),
+        messages=[{"role": "user", "content": "hi"}],
+        confirm=lambda pretty: True,
+        emit=lambda line: None,
+        is_cancelled=lambda: cancel_flag["on"],
+        on_event=events.append,
+    )
+    assert text == CANCELLED_TEXT
+    assert any(e.kind == EventKind.RUN_CANCELLED for e in events)
+
+
+def test_agent_worker_cancel_unblocks_confirm_and_aborts_client(
+    mcp_env: MCPEnv,
+) -> None:
+    """request_cancel sets the flag, aborts a blocked read and unblocks confirm."""
+    client = ScriptedClient([])
+    calls: list[str] = []
+    client.cancel = lambda: calls.append("cancel")  # type: ignore[attr-defined]
+
+    worker = AgentWorker(client, lambda: build_server(mcp_env.ctx), [])
+
+    # A pending confirm must resolve as False once cancel lands.
+    worker._confirm_event.clear()
+    worker.request_cancel()
+
+    assert worker._cancel.is_set()
+    assert calls == ["cancel"]
+    # _confirm returns immediately (False) while cancelled, without waiting.
+    assert worker._confirm("some write") is False

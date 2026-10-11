@@ -439,6 +439,8 @@ class TestChatPanelStreaming:
         """Live deltas appear immediately; finish re-renders them as Markdown."""
         chat_panel._on_stream_text("сначала ")
         chat_panel._on_stream_text("plain, потом ")
+        # Deltas are coalesced on a throttle timer; drain to render them now.
+        chat_panel._drain_stream()
         turn = chat_panel._live_turn
         assert turn is not None
         assert "сначала plain, потом" in turn.plain_text()
@@ -456,6 +458,21 @@ class TestChatPanelStreaming:
         assert saved.role == "assistant"
         assert saved.content.startswith("сначала plain")
         assert "**жирный** финал" in saved.content
+
+    def test_stream_deltas_are_coalesced_by_throttle(
+        self, chat_panel: ChatPanel
+    ) -> None:
+        """Rapid deltas coalesce so the GUI is not re-rendered per token."""
+        chat_panel._on_stream_text("a")
+        chat_panel._on_stream_text("b")
+        chat_panel._on_stream_text("c")
+        # Only the leading edge rendered; the rest wait on the throttle timer.
+        assert chat_panel._stream_timer.isActive()
+        turn = chat_panel._live_turn
+        assert turn is not None
+        assert turn.plain_text().strip() == "a"
+        chat_panel._drain_stream()
+        assert "abc" in turn.plain_text()
 
     def test_stream_cancel_keeps_partial_and_skips_save(
         self, chat_panel: ChatPanel

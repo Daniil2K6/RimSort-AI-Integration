@@ -15,7 +15,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from loguru import logger
-from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Slot
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, QTimer, Slot
 from PySide6.QtGui import QKeyEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -96,6 +96,12 @@ def _luminance(color: str) -> float:
     return 0.2126 * red + 0.7152 * green + 0.0722 * blue
 
 
+#: Minimum gap between streamed-markdown re-renders, in milliseconds.
+#: Token-by-token ``setMarkdown`` saturates the GUI thread and freezes the
+#: UI; buffering deltas and flushing on this timer keeps the app responsive.
+STREAM_FLUSH_MS = 50
+
+
 class ChatPanel(QWidget):
     """Chat UI: history sidebar, message view, input box, provider menu."""
 
@@ -121,6 +127,11 @@ class ChatPanel(QWidget):
         self._live_turn: AssistantTurn | None = None
         self._last_user_bubble: MessageBubble | None = None
         self._last_assistant_turn: AssistantTurn | None = None
+        self._stream_buffer: list[str] = []
+        self._stream_timer = QTimer(self)
+        self._stream_timer.setSingleShot(True)
+        self._stream_timer.setInterval(STREAM_FLUSH_MS)
+        self._stream_timer.timeout.connect(self._flush_stream_turn)
 
         ensure_providers(self.settings)
         self._build_ui()
@@ -637,15 +648,38 @@ class ChatPanel(QWidget):
 
     @Slot(str)
     def _on_stream_text(self, delta: str) -> None:
-        """Append one streamed assistant delta to the live turn."""
+        """Buffer one streamed delta and flush on a throttle timer.
+
+        Re-rendering markdown on every token saturates the GUI thread and
+        freezes the UI. Deltas are buffered here; the first renders at once
+        (leading edge) and the rest coalesce to one render per
+        ``STREAM_FLUSH_MS`` so the app stays responsive.
+        """
         if not delta:
             return
+        self._stream_buffer.append(delta)
+        if not self._stream_timer.isActive():
+            self._flush_stream_turn()
+            self._stream_timer.start()
+
+    def _flush_stream_turn(self) -> None:
+        """Render any buffered stream deltas into the live turn."""
+        if not self._stream_buffer:
+            return
+        chunk = "".join(self._stream_buffer)
+        self._stream_buffer.clear()
         turn = self._ensure_live_turn()
-        turn.append_stream(delta)
+        turn.append_stream(chunk)
         self._scroll_to_bottom()
+
+    def _drain_stream(self) -> None:
+        """Stop the throttle timer and render any last buffered deltas."""
+        self._stream_timer.stop()
+        self._flush_stream_turn()
 
     @Slot(str)
     def _on_finished_ok(self, text: str) -> None:
+        self._drain_stream()
         turn = self._live_turn
         self._live_turn = None
         if turn is not None:
@@ -671,6 +705,7 @@ class ChatPanel(QWidget):
 
     @Slot(str)
     def _on_failed(self, message: str) -> None:
+        self._drain_stream()
         turn = self._live_turn
         if turn is not None:
             turn.finalize()
@@ -680,6 +715,7 @@ class ChatPanel(QWidget):
 
     @Slot()
     def _on_worker_finished(self) -> None:
+        self._drain_stream()
         if self._live_turn is not None:
             self._live_turn.finalize()
             self._live_turn = None

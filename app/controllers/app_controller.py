@@ -15,6 +15,7 @@ from app.services.instance_service import InstanceService
 from app.utils.app_info import AppInfo
 from app.utils.dds_utility import DDSUtility
 from app.utils.gui_info import GUIInfo
+from app.utils.gui_ipc import GuiIpcServer
 from app.utils.steam.steamcmd.wrapper import SteamcmdInterface
 from app.views.main_window import MainWindow
 from app.views.settings_dialog import SettingsDialog
@@ -49,6 +50,8 @@ class AppController(QObject):
         self.initialize_instance_service()
         # Initialize the main window controller
         self.initialize_main_window()
+        # Local IPC so a second launch with --attach-gui can raise this window
+        self._gui_ipc: GuiIpcServer | None = None
 
     def set_language(self) -> None:
         """Sets the language of the application on initial setup."""
@@ -153,13 +156,28 @@ class AppController(QObject):
         """Runs the main application loop after initializing the main window."""
         self.main_window.show()
         self.main_window.initialize_content(is_initial=True)
+        # Listen for --attach-gui handoff requests from a second launch.
+        self._start_gui_ipc()
         # If the window was closed during initialization (e.g. user closed during
         # mod scanning), skip the main event loop — Qt resets the quit flag in exec()
-        # so a prior quit() from quitOnLastWindowClosed would have no effect and the
-        # event loop would block forever with no visible windows.
+        # so a prior quit() from quitOnLastWindowClosed would have no effect and
+        # the event loop would block forever with no visible windows.
         if not self.main_window.isVisible():
             return 0
         return self.app.exec()
+
+    def _start_gui_ipc(self) -> None:
+        """Start the local IPC server that raises this window on request."""
+        server = GuiIpcServer(self)
+        server.raise_requested.connect(self._on_gui_raise_requested)
+        if server.start():
+            self._gui_ipc = server
+
+    def _on_gui_raise_requested(self) -> None:
+        """Bring the main window to the front (called in the main thread)."""
+        self.main_window.show()
+        self.main_window.raise_()
+        self.main_window.activateWindow()
 
     def shutdown_watchdog(self) -> None:
         """Initiates the shutdown procedure for the watchdog."""

@@ -1,8 +1,7 @@
 # AI Integration Progress
 
 Per-stage progress for the AI chat / MCP / action-observation work.
-Stages are implemented in order A→G. This file is updated as each stage
-lands.
+Stages are implemented in order A→G. **All stages A–G are complete.**
 
 ## Status
 
@@ -14,7 +13,7 @@ lands.
 | D | Working/saved mod-list state + preview/apply | **Done** |
 | E | Batch/dependency/conflict/log MCP tools | **Done** |
 | F | Token economy (prompt/session/context budget) | **Done** |
-| G | IPC bridge (`--attach-gui`) | Pending |
+| G | IPC bridge (`--attach-gui`) | **Done** |
 
 ## Stage A — real streaming + correct cancellation
 
@@ -224,4 +223,27 @@ v1 load.
 
 ## Stage G — IPC bridge (`--attach-gui`)
 
-Pending.
+Done. A second launch can hand off to the running GUI instead of erroring out.
+
+- `app/utils/gui_ipc.py`:
+  - `gui_socket_name()` — a stable, per-user local socket name (scoped by a
+    hash of the app storage folder so one user's instance never steals
+    another's attach; `QLocalServer` names are system-global on some platforms).
+  - `GuiIpcServer` (main-thread `QObject`) — listens on a `QLocalServer`,
+    clears any stale socket from a crashed run, reads a `raise` command and
+    emits `raise_requested`. Transport is a **local socket only** — no TCP
+    listener on any interface.
+  - `request_gui_raise()` — client that connects, sends `raise`, and reports
+    whether a running instance accepted (False when none is listening).
+- Primary instance: `AppController` starts the server after the main window is
+  shown and raises/activates the window on `raise_requested` (main thread).
+- `--attach-gui` in `app/__main__.py`: when the single-instance lock is held by
+  a running instance, a launch with `--attach-gui` calls `request_gui_raise()`
+  and exits 0 on success (the existing window comes to the front); without the
+  flag (or when no server answers) the original "Already Running" dialog is
+  shown.
+
+Verified: ruff/format/mypy clean; full suite 1685 passed / 1 skipped; jscpd 0
+clones. New tests cover socket-name stability/scoping, client returning False
+with no server, a full server↔client raise round-trip, and ignoring unknown
+commands.

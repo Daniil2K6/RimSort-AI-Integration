@@ -11,11 +11,15 @@ from __future__ import annotations
 
 from html import escape
 
-from PySide6.QtCore import QPoint, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, Qt, Signal
 from PySide6.QtGui import (
     QColor,
+    QCursor,
+    QEnterEvent,
     QPainter,
     QPaintEvent,
+    QPalette,
+    QResizeEvent,
     QTextCharFormat,
     QTextCursor,
     QTextDocument,
@@ -26,6 +30,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMenu,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -35,10 +40,12 @@ class MessageBubble(QFrame):
     """One chat message rendered as a rounded tinted bubble.
 
     User messages render as bold plain text; assistant and error
-    messages render Markdown through the bubble's own document.
-    Right-clicking a bubble offers Copy, and — when the panel enables
-    them — Edit & Resend (last user message) and Regenerate (last
-    assistant reply).
+    messages render Markdown through the bubble's own document. The
+    text is selectable with the mouse (and keyboard), a small copy
+    button fades in on hover for one-click copying, and right-clicking
+    a bubble offers Copy (the selection when one exists, otherwise the
+    whole text) and — when the panel enables them — Edit & Resend
+    (last user message) and Regenerate (last assistant reply).
     """
 
     edit_requested = Signal()
@@ -67,14 +74,66 @@ class MessageBubble(QFrame):
         self._label.setTextFormat(Qt.TextFormat.RichText)
         self._label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
         self._label.setOpenExternalLinks(True)
         self._label.setWordWrap(True)
+        self._apply_selection_palette()
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 5, 10, 5)
         layout.addWidget(self._label)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+
+        self._copy_button = QPushButton(self.tr("Copy"), self)
+        self._copy_button.setObjectName("MessageBubbleCopyButton")
+        self._copy_button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._copy_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._copy_button.setStyleSheet(
+            "QPushButton { background: rgba(0, 0, 0, 70); color: #ffffff;"
+            " border: none; border-radius: 3px; padding: 2px 6px;"
+            " font-size: 10px; }"
+            "QPushButton:hover { background: rgba(0, 0, 0, 120); }"
+        )
+        self._copy_button.clicked.connect(self._copy_to_clipboard)
+        self._copy_button.hide()
+        self.installEventFilter(self)
+        self._copy_button.installEventFilter(self)
+
+    # ---------------------------------------------------------- copy button
+    def enterEvent(self, event: QEnterEvent) -> None:
+        """Reveal the one-copy button while the pointer is over the bubble."""
+        super().enterEvent(event)
+        self._position_copy_button()
+        self._copy_button.show()
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        """Hide the copy button once the pointer truly leaves the bubble.
+
+        Moving from the bubble onto its child copy button also fires a
+        ``Leave`` for the frame, so only hide when the cursor is outside
+        the bubble's rectangle (i.e. not resting on the button).
+        """
+        if (
+            obj in (self, self._copy_button)
+            and event.type() == QEvent.Type.Leave
+            and not self.rect().contains(self.mapFromGlobal(QCursor.pos()))
+        ):
+            self._copy_button.hide()
+        return super().eventFilter(obj, event)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        """Keep the copy button anchored to the top-right corner."""
+        super().resizeEvent(event)
+        self._position_copy_button()
+
+    def _position_copy_button(self) -> None:
+        size = self._copy_button.size()
+        self._copy_button.move(self.width() - size.width() - 6, 4)
+
+    def _copy_to_clipboard(self) -> None:
+        """Copy the bubble's full text to the clipboard (one click)."""
+        QApplication.clipboard().setText(self.plain_text())
 
     def paintEvent(self, event: QPaintEvent) -> None:
         """Draw the rounded tinted background without a stylesheet.
@@ -115,6 +174,21 @@ class MessageBubble(QFrame):
         fmt.setForeground(QColor(self._text_color))
         cursor.mergeCharFormat(fmt)
 
+    def _apply_selection_palette(self) -> None:
+        """Choose a selection highlight that stays readable on the tint.
+
+        The default system highlight is often a saturated blue that blends
+        into a blue user bubble, making selections invisible. Pick the
+        highlight from the bubble's text color so the text remains legible
+        against the selection background.
+        """
+        text = QColor(self._text_color)
+        highlight = QColor("#3D6E9E") if text.lightness() > 128 else QColor("#C4D8EC")
+        palette = self._label.palette()
+        palette.setColor(QPalette.ColorRole.Highlight, highlight)
+        palette.setColor(QPalette.ColorRole.HighlightedText, text)
+        self._label.setPalette(palette)
+
     def plain_text(self) -> str:
         """The bubble's text without any markup."""
         return self._document.toPlainText()
@@ -137,8 +211,10 @@ class MessageBubble(QFrame):
         self._regenerable = regenerable
 
     def _show_context_menu(self, pos: QPoint) -> None:
+        selected = self._label.selectedText()
         menu = QMenu(self)
         copy_action = menu.addAction(self.tr("Copy"))
+        copy_action.setEnabled(bool(selected or self.plain_text()))
         edit_action = (
             menu.addAction(self.tr("Edit & Resend")) if self._editable else None
         )
@@ -147,7 +223,9 @@ class MessageBubble(QFrame):
         )
         chosen = menu.exec(self.mapToGlobal(pos))
         if chosen is copy_action:
-            QApplication.clipboard().setText(self.plain_text())
+            QApplication.clipboard().setText(
+                selected if selected else self.plain_text()
+            )
         elif edit_action is not None and chosen is edit_action:
             self.edit_requested.emit()
         elif regenerate_action is not None and chosen is regenerate_action:
@@ -180,6 +258,7 @@ class ToolCallRow(QFrame):
         self._label.setObjectName("ChatToolRowText")
         self._label.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
         )
         self._layout = QHBoxLayout(self)
         self._layout.setContentsMargins(4, 0, 4, 0)

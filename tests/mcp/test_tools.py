@@ -295,9 +295,7 @@ def test_external_edit_bumps_revision(mcp_env: MCPEnv) -> None:
     server = build_server(mcp_env.ctx)
     call(server, "get_modlist_state")  # establish the saved snapshot
     # Simulate a concurrent GUI edit bypassing the agent.
-    mcp_env.ctx.write_active_config(
-        ["ludeon.rimworld", "test.modb"], backup=False
-    )
+    mcp_env.ctx.write_active_config(["ludeon.rimworld", "test.modb"], backup=False)
     state = call(server, "get_modlist_state")
     assert state["revision"] == 1
     assert state["working"] == ["ludeon.rimworld", "test.modb"]

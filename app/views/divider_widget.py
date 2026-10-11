@@ -47,6 +47,10 @@ class DividerItemInner(QWidget):
 
         self.name_label = QLabel(name)
         self.name_label.setObjectName("DividerNameLabel")
+        self.name_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
         font = self.name_label.font()
         font.setBold(True)
         font.setPointSize(font.pointSize() + 1)
@@ -55,6 +59,10 @@ class DividerItemInner(QWidget):
 
         self.count_label = QLabel()
         self.count_label.setObjectName("DividerCountLabel")
+        self.count_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
         count_font = QFont(self.count_label.font())
         count_font.setItalic(True)
         self.count_label.setFont(count_font)

@@ -4319,6 +4319,10 @@ class ModsPanel(QWidget):
         self.active_mods_label = QLabel(self.tr("Active [0]"))
         self.active_mods_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.active_mods_label.setObjectName("summaryValue")
+        self.active_mods_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
         self.active_mods_list = ModListWidget(
             list_type="Active",
             settings=self.settings,
@@ -4340,6 +4344,10 @@ class ModsPanel(QWidget):
         self.inactive_mods_label = QLabel(self.tr("Inactive [0]"))
         self.inactive_mods_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.inactive_mods_label.setObjectName("summaryValue")
+        self.inactive_mods_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
         self.inactive_mods_list = ModListWidget(
             list_type="Inactive",
             settings=self.settings,

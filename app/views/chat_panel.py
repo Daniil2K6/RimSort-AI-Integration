@@ -168,7 +168,7 @@ class ChatPanel(QWidget):
         provider = get_active_provider(self.settings)
         if provider is not None and not self._key_configured(provider):
             self._append_activity(
-                self.tr("No API key configured. Use Add Model -> Add Provider first.")
+                self.tr("No API key configured. Use Models -> Add Provider first.")
             )
 
     # ------------------------------------------------------------------ UI
@@ -193,7 +193,7 @@ class ChatPanel(QWidget):
         self.title_label = QLabel(self.tr("New chat"), header)
         self.title_label.setObjectName("ChatTitle")
 
-        self.model_button = QPushButton(self.tr("Add Model"), header)
+        self.model_button = QPushButton(self.tr("Models"), header)
         self.model_button.setToolTip(self.tr("Switch models or add a provider"))
         self.model_menu = QMenu(self.model_button)
         self.model_menu.aboutToShow.connect(self._rebuild_model_menu)
@@ -327,7 +327,7 @@ class ChatPanel(QWidget):
 
     @Slot()
     def _rebuild_model_menu(self) -> None:
-        """Fill the Add Model menu: add provider + provider/model switcher."""
+        """Fill the Models menu: add provider + provider/model switcher."""
         menu = self.model_menu
         menu.clear()
         self._model_submenus.clear()
@@ -568,7 +568,7 @@ class ChatPanel(QWidget):
             return
         provider = get_active_provider(self.settings)
         if provider is None or not self.settings.ai_model.strip():
-            self._append_error(self.tr("Add a model first: Add Model -> Add Provider."))
+            self._append_error(self.tr("Add a model first: Models -> Add Provider."))
             self._open_settings()
             return
         self.input.clear()

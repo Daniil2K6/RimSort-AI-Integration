@@ -71,6 +71,9 @@ class Settings(QObject):
         # gui_* action targets.
         self.ai_chat_follow_actions: bool = True
         self.ai_chat_highlight: bool = True
+        # Stage F: approximate token budget for the chat context; older turns
+        # are trimmed once the conversation exceeds this.
+        self.ai_context_budget_tokens: int = 8000
 
         # Databases
         self.external_steam_metadata_source: str = "Configured URL"

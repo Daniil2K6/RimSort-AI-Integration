@@ -18,20 +18,52 @@ from loguru import logger
 
 from app.utils.json_utils import atomic_json_dump
 
+#: Current on-disk session schema. v2 adds tool_calls/tool_call_id/name so a
+#: conversation round-trips losslessly (Stage F); v1 files load as legacy.
+SCHEMA_VERSION = 2
+
 
 @dataclass
 class ChatMessage:
-    """One persisted chat message."""
+    """One persisted chat message.
+
+    ``tool_calls``/``tool_call_id``/``name`` are optional so plain user and
+    assistant text stays compact, while assistant tool-call turns and tool
+    results round-trip instead of being dropped on load.
+    """
 
     role: str
     content: str
+    tool_calls: list[dict[str, Any]] | None = None
+    tool_call_id: str = ""
+    name: str = ""
 
-    def to_dict(self) -> dict[str, str]:
-        return {"role": self.role, "content": self.content}
+    @property
+    def has_payload(self) -> bool:
+        """Whether the message carries anything worth persisting."""
+        return bool(self.content) or bool(self.tool_calls) or self.role == "tool"
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            data["tool_calls"] = self.tool_calls
+        if self.tool_call_id:
+            data["tool_call_id"] = self.tool_call_id
+        if self.name:
+            data["name"] = self.name
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> ChatMessage:
-        return cls(role=str(data.get("role", "")), content=str(data.get("content", "")))
+        raw_calls = data.get("tool_calls")
+        tool_calls = raw_calls if isinstance(raw_calls, list) else None
+        return cls(
+            role=str(data.get("role", "")),
+            content=str(data.get("content", "")),
+            tool_calls=tool_calls,
+            tool_call_id=str(data.get("tool_call_id", "")),
+            name=str(data.get("name", "")),
+        )
 
 
 @dataclass
@@ -50,8 +82,14 @@ class ChatSession:
     def is_empty(self) -> bool:
         return not self.messages
 
+    @property
+    def schema_version(self) -> int:
+        """On-disk schema this session serializes to (current format)."""
+        return SCHEMA_VERSION
+
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": SCHEMA_VERSION,
             "id": self.id,
             "title": self.title,
             "created_at": self.created_at,
@@ -67,8 +105,13 @@ class ChatSession:
         messages: list[ChatMessage] = []
         if isinstance(raw_messages, list):
             for item in raw_messages:
-                if isinstance(item, dict) and item.get("content"):
-                    messages.append(ChatMessage.from_dict(item))
+                if not isinstance(item, dict):
+                    continue
+                message = ChatMessage.from_dict(item)
+                # v1 files only stored non-empty content; v2 also keeps
+                # tool_calls and tool results so nothing is lost on reload.
+                if message.has_payload:
+                    messages.append(message)
         return cls(
             id=str(data.get("id") or uuid.uuid4().hex),
             title=str(data.get("title", "")),

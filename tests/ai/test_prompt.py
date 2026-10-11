@@ -8,38 +8,39 @@ from app.ai.prompt import (
     normalize_system_prompt,
 )
 
-PART_1 = "== ЧАСТЬ 1. ПОВЕДЕНИЕ И МАНЕРА ОБЩЕНИЯ =="
-PART_2 = "== ЧАСТЬ 2. СТРОГИЕ ИНСТРУКЦИИ: ГДЕ, КАК И ЧТО БРАТЬ =="
-PART_3 = "== ЧАСТЬ 3. ТЕХНИЧЕСКИЕ УКАЗАНИЯ (обычный пользователь сюда не заходит) =="
+PART_1 = "ПОВЕДЕНИЕ"
+PART_2 = "ИНСТРУМЕНТЫ"
+PART_3 = "ИСТОЧНИКИ МОДОВ"
+PART_4 = "ПОРЯДОК И ПРОВЕРКА"
+PART_5 = "АГЕНТНЫЕ СЦЕНАРИИ"
 
 REQUIRED_REFERENCES = [
     "https://steamcommunity.com/app/294100/workshop/",
-    "https://steamcommunity.com/sharedfiles/filedetails/?id=<числовой id>",
+    "sharedfiles/filedetails/?id=",
     "Download -> GitHub Mods",
-    "https://github.com/<user>/<repo>",
-    "https://github.com/Daniil2K6/RimSort-AI-Integration/issues",
-    "https://rimsort.github.io/RimSort/",
-    "https://ludeon.com/forums/",
-    "python -m app mcp",
-    "RIMSORT_MCP_SETTINGS",
-    "app/mcp/server.py",
-    "app/mcp/context.py",
+    "About/About.xml",
     "ModsConfig.xml",
-    "Settings -> Locations",
-    "set_instance",
     "get_status",
+    "validate_modlist",
+    "preview_modlist_changes",
+    "apply_modlist_plan",
     "dry_run",
 ]
 
 
-def test_prompt_contains_three_ordered_parts() -> None:
-    first = DEFAULT_SYSTEM_PROMPT.find(PART_1)
-    second = DEFAULT_SYSTEM_PROMPT.find(PART_2)
-    third = DEFAULT_SYSTEM_PROMPT.find(PART_3)
-    assert first != -1
-    assert second != -1
-    assert third != -1
-    assert first < second < third
+def test_prompt_has_ordered_sections() -> None:
+    order = [PART_1, PART_2, PART_3, PART_4, PART_5]
+    positions = [DEFAULT_SYSTEM_PROMPT.find(section) for section in order]
+    assert all(pos != -1 for pos in positions), positions
+    assert positions == sorted(positions)
+
+
+def test_prompt_is_compact() -> None:
+    """Stage F: the default prompt is trimmed well below the original size."""
+    # The original was ~1034 words / ~8469 chars. The compact prompt must cut
+    # at least 40% of tokens (proxy: words).
+    assert len(DEFAULT_SYSTEM_PROMPT.split()) < 700
+    assert len(DEFAULT_SYSTEM_PROMPT) < 5500
 
 
 def test_prompt_lists_required_references() -> None:

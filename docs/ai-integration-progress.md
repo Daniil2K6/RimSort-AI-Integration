@@ -13,7 +13,7 @@ lands.
 | C | GUI action bridge + stable ID registry | **Done** |
 | D | Working/saved mod-list state + preview/apply | **Done** |
 | E | Batch/dependency/conflict/log MCP tools | **Done** |
-| F | Token economy (prompt/session/context budget) | Pending |
+| F | Token economy (prompt/session/context budget) | **Done** |
 | G | IPC bridge (`--attach-gui`) | Pending |
 
 ## Stage A — real streaming + correct cancellation
@@ -190,7 +190,37 @@ clones. New tests cover dependency resolution, conflict detection, log parsing
 
 ## Stage F — Token economy
 
-Pending.
+Done. The two context costs the app controls — the system prompt and the
+conversation — are both bounded.
+
+- **Compact system prompt** (`app/ai/prompt.py`): rewritten from ~1034 words /
+  ~8469 chars (~1344 est. tokens) down to ~405 words / ~3367 chars (~526 est.
+  tokens) — a **~61% reduction**, above the −40% target. The tool catalogue,
+  file paths and internal references were cut because the tool schemas are
+  already passed via function-calling; safety rules (legal sources, no manual
+  file edits, confirmation warnings, honesty, fact-first) and the behavior
+  guidelines are preserved. Tests assert the new compact size and section order.
+- **Context budget** (`app/ai/budget.py`): `estimate_tokens` /
+  `message_tokens` / `total_tokens` / `trim_messages_to_budget`. The chat panel
+  trims the *oldest* conversation turns to a token budget (new setting
+  `ai_context_budget_tokens`, default 8000) while always keeping the system
+  message and the most recent exchange. An oversized newest message is kept
+  (truncated context beats empty). Wired into the request path in
+  `chat_panel._start_worker`.
+- **Versioned, lossless session format** (`app/ai/chat_store.py`):
+  `SCHEMA_VERSION = 2`. `ChatMessage` gains optional `tool_calls`,
+  `tool_call_id` and `name`; `to_dict`/`from_dict` round-trip them, and load
+  no longer drops tool-call / tool-result rows that have empty content. v1
+  files (no `schema_version`, content-only) still load as legacy. Sessions now
+  serialize with `schema_version` so future formats can migrate safely.
+- Usage (`AssistantReply.usage`) is already returned by the client; surfacing
+  it in the UI is left as optional polish (no signal-signature change to avoid
+  regressions).
+
+Verified: ruff/format/mypy clean; full ai/views/models suites pass (357);
+jscpd 0 clones. New tests cover budget trimming (system kept, oldest dropped,
+oversized-newest kept) and store versioning + tool_calls round-trip + legacy
+v1 load.
 
 ## Stage G — IPC bridge (`--attach-gui`)
 

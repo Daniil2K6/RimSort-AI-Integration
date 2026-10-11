@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.ai.agent import CANCELLED_TEXT, AgentWorker
+from app.ai.budget import DEFAULT_CONTEXT_BUDGET_TOKENS, trim_messages_to_budget
 from app.ai.chat_store import ChatMessage, ChatSession, ChatStore, make_title
 from app.ai.client import AIClient
 from app.ai.events import EventKind
@@ -594,6 +595,12 @@ class ChatPanel(QWidget):
             {"role": message.role, "content": message.content}
             for message in self._session.messages
         )
+        # Stage F: keep the request within the context token budget by
+        # trimming the oldest conversation turns (the system prompt is kept).
+        budget = int(getattr(self.settings, "ai_context_budget_tokens", 0)) or (
+            DEFAULT_CONTEXT_BUDGET_TOKENS
+        )
+        api_messages, _dropped = trim_messages_to_budget(api_messages, budget)
         client = AIClient(
             base_url=str(provider.get("base_url", "")),
             api_key=str(provider.get("api_key", "")),

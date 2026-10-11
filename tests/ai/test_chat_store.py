@@ -37,6 +37,71 @@ def test_save_load_roundtrip(tmp_path: Path) -> None:
     assert loaded.model == "model-1"
 
 
+def test_session_serializes_current_schema_version(tmp_path: Path) -> None:
+    store = ChatStore(tmp_path)
+    session = store.new_session()
+    session.messages.append(ChatMessage(role="user", content="hi"))
+    path = store.save(session)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["schema_version"] == 2
+    assert session.schema_version == 2
+
+
+def test_tool_calls_roundtrip_not_dropped(tmp_path: Path) -> None:
+    """Stage F: assistant tool_calls and tool results survive save/load."""
+    store = ChatStore(tmp_path)
+    session = store.new_session()
+    session.messages.append(ChatMessage(role="user", content="list mods"))
+    session.messages.append(
+        ChatMessage(
+            role="assistant",
+            content="",
+            tool_calls=[{"id": "call_1", "function": {"name": "list_mods"}}],
+        )
+    )
+    session.messages.append(
+        ChatMessage(role="tool", content="[]", tool_call_id="call_1", name="list_mods")
+    )
+    session.messages.append(ChatMessage(role="assistant", content="done"))
+
+    store.save(session)
+    loaded = store.load(session.id)
+    assert loaded is not None
+    roles = [m.role for m in loaded.messages]
+    assert roles == ["user", "assistant", "tool", "assistant"]
+    tool_msg = loaded.messages[2]
+    assert tool_msg.tool_call_id == "call_1"
+    assert tool_msg.name == "list_mods"
+    call_msg = loaded.messages[1]
+    assert call_msg.tool_calls is not None
+    assert call_msg.tool_calls[0]["id"] == "call_1"
+
+
+def test_legacy_v1_session_still_loads(tmp_path: Path) -> None:
+    """A v1 file (no schema_version, content-only) loads as a legacy session."""
+    store = ChatStore(tmp_path)
+    legacy = {
+        "id": "legacy1",
+        "title": "Old",
+        "created_at": "2024-01-01T00:00:00",
+        "updated_at": "2024-01-01T00:00:00",
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "yo"},
+            # A v1 empty-content tool row would have been dropped; ensure a
+            # message with content still loads.
+        ],
+        "provider_id": "",
+        "model": "",
+    }
+    path = tmp_path / "legacy1.json"
+    path.write_text(json.dumps(legacy), encoding="utf-8")
+    loaded = store.load("legacy1")
+    assert loaded is not None
+    assert [m.content for m in loaded.messages] == ["hi", "yo"]
+    assert loaded.title == "Old"
+
+
 def test_list_orders_by_created_at_desc(tmp_path: Path) -> None:
     """Sessions are listed newest-first by creation time."""
     (tmp_path / "older.json").write_text(

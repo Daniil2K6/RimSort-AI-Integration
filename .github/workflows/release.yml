@@ -72,6 +72,7 @@ jobs:
   release:
     permissions:
       contents: write
+      actions: read
       packages: read
       statuses: write
     needs: [build, pre-build]

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from app.mcp import analysis, launcher, modops, updates
+from app.mcp import analysis, github_mods, launcher, modops, updates
 from app.mcp.context import MCPContext
 from app.mcp.gui import register_gui_tools
 from app.models.metadata.metadata_structure import AboutXmlMod
@@ -594,6 +594,51 @@ def register_tools(
         )
 
     # jscpd:ignore-end
+
+    @mcp.tool()
+    def download_workshop_mod(
+        publishedfileid: str,
+        validate: bool | None = None,
+        install_steamcmd: bool = False,
+        dry_run: bool = False,
+        batch_timeout: int = 1800,
+    ) -> dict[str, Any]:
+        """Download one Steam Workshop mod by its publishedfileid via SteamCMD.
+
+        Works for mods that are not installed yet as well. The id is the
+        numeric Steam Community file id (from the workshop URL
+        .../filedetails/?id=<publishedfileid>). Installs to disk only —
+        add the resulting packageId to the active list separately.
+        dry_run=true only resolves what would be downloaded.
+        """
+        return updates.update_mods(
+            ctx,
+            publishedfileids=[publishedfileid],
+            validate=validate,
+            install_steamcmd=install_steamcmd,
+            dry_run=dry_run,
+            batch_timeout=batch_timeout,
+        )
+
+    @mcp.tool()
+    def install_github_mod(
+        url: str,
+        folder_name: str | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """Install a GitHub-hosted mod's latest stable release zip to disk.
+
+        url: a GitHub repository URL (https://github.com/author/mod) or a
+        bare ``author/mod`` slug. Downloads the largest non-source .zip
+        asset of the newest stable release and extracts it into the
+        instance's local mods folder. folder_name optionally overrides the
+        target folder (defaults to the repo name). Installs to disk only —
+        add the mod to the active list separately. dry_run=true resolves
+        the release/asset/target without downloading.
+        """
+        return github_mods.install_github_mod(
+            ctx, url, folder_name=folder_name, dry_run=dry_run
+        )
 
     @mcp.tool()
     def delete_mod(

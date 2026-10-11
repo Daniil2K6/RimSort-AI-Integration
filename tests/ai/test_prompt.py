@@ -17,7 +17,8 @@ PART_5 = "АГЕНТНЫЕ СЦЕНАРИИ"
 REQUIRED_REFERENCES = [
     "https://steamcommunity.com/app/294100/workshop/",
     "sharedfiles/filedetails/?id=",
-    "Download -> GitHub Mods",
+    "install_github_mod",
+    "download_workshop_mod",
     "About/About.xml",
     "ModsConfig.xml",
     "get_status",

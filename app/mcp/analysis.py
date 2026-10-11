@@ -120,20 +120,55 @@ def find_conflicts(
     }
 
 
-def _player_log_path(ctx: MCPContext) -> Path:
+def _player_log_candidates(ctx: MCPContext) -> list[Path]:
+    """Likely Player.log locations for the active instance.
+
+    RimWorld keeps config and Player.log side by side on Windows/Linux but
+    splits them on macOS (config under ``Application Support``, log under
+    ``Logs``). Return an ordered candidate list so the analyzer can pick
+    the first that exists instead of assuming one platform layout.
+    """
     config_folder = ctx.instance.config_folder
     if not config_folder:
-        raise ToolError("Instance has no config folder; cannot locate Player.log")
-    return Path(config_folder).parent / "Player.log"
+        return []
+    config = Path(config_folder)
+    candidates = [
+        config / "Player.log",
+        config.parent / "Player.log",
+    ]
+    # macOS: mirror Application Support -> Logs (both nested and parent).
+    text = str(config)
+    if "Application Support" in text:
+        logs = Path(text.replace("Application Support", "Logs"))
+        candidates.extend([logs / "Player.log", logs.parent / "Player.log"])
+    # macOS default even when config_folder is unset/odd.
+    candidates.append(
+        Path.home() / "Library/Logs/Ludeon Studio/RimWorld by Ludeon Studios/Player.log"
+    )
+    # De-duplicate while preserving order.
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for path in candidates:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            unique.append(path)
+    return unique
 
 
 def analyze_player_log(
     ctx: MCPContext, max_errors: int = _LOG_ERROR_CAP
 ) -> dict[str, Any]:
     """Scan Player.log for exception blocks and implicated mod folders."""
-    path = _player_log_path(ctx)
-    if not path.is_file():
-        return {"ok": False, "code": "log_not_found", "path": str(path)}
+    candidates = _player_log_candidates(ctx)
+    path = next((p for p in candidates if p.is_file()), None)
+    if path is None:
+        return {
+            "ok": False,
+            "code": "log_not_found",
+            "path": str(candidates[0]) if candidates else None,
+            "checked": [str(p) for p in candidates],
+        }
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:

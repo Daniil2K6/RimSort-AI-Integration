@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
@@ -76,6 +78,40 @@ def test_analyze_player_log_parses_exceptions(mcp_env: MCPEnv) -> None:
     block = result["errors"][0]
     assert "NullReferenceException" in block["message"]
     assert "MyBrokenMod" in block["mod_folders"]
+
+
+def test_player_log_candidates_include_macos_logs(tmp_path: Path) -> None:
+    """On macOS the log lives under Logs, not Application Support."""
+    from types import SimpleNamespace
+
+    from app.mcp.analysis import _player_log_candidates
+
+    config = (
+        tmp_path
+        / "Library/Application Support/Ludeon Studio/RimWorld by Ludeon Studios"
+    )
+    ctx = SimpleNamespace(instance=SimpleNamespace(config_folder=str(config)))
+    candidates = [str(p) for p in _player_log_candidates(ctx)]  # type: ignore[arg-type]
+    assert any("Logs" in p and p.endswith("Player.log") for p in candidates)
+
+
+def test_analyze_player_log_finds_macos_logs_path(
+    mcp_env: MCPEnv, tmp_path: Path
+) -> None:
+    """The analyzer picks the macOS Logs copy when the config sibling is absent."""
+    from app.mcp import analysis
+
+    config = tmp_path / "mac/Library/Application Support/Ludeon Studio/RW Studios"
+    logs = tmp_path / "mac/Library/Logs/Ludeon Studio/RW Studios"
+    logs.mkdir(parents=True)
+    (logs / "Player.log").write_text(
+        "FormatException: bad thing\n  at MyMod.Do () [0x1]\n[x]\n",
+        encoding="utf-8",
+    )
+    mcp_env.write_settings(config_folder=str(config))
+    result = analysis.analyze_player_log(mcp_env.ctx)
+    assert result["ok"] is True
+    assert "Logs" in result["path"]
 
 
 def test_apply_modlist_batch_one_atomic_commit(mcp_env: MCPEnv) -> None:

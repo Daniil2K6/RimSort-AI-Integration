@@ -301,7 +301,17 @@ def _format_http_error(status: int, response: Any) -> str:
     if status in (401, 403):
         return f"AI endpoint rejected the credentials (HTTP {status}).{detail}"
     if status == 404:
-        return f"AI endpoint not found (HTTP {status}); check the base URL.{detail}"
+        hint = ""
+        lowered = body.lower()
+        if "slug" in lowered or "unavailable for free" in lowered:
+            hint = (
+                " The provider rejected this model id — update the model in "
+                "Settings -> AI Assistant (the response above names the "
+                "correct slug)."
+            )
+        return (
+            f"AI endpoint not found (HTTP {status}); check the base URL.{detail}{hint}"
+        )
     if status == 429:
         return f"AI endpoint rate limit hit (HTTP {status}).{detail}"
     return f"AI endpoint error (HTTP {status}).{detail}"

@@ -40,6 +40,8 @@ WRITE_TOOLS = frozenset(
         "save_modpack",
         "launch_game",
         "update_mods",
+        "download_workshop_mod",
+        "install_github_mod",
         "delete_mod",
     }
 )
@@ -50,6 +52,8 @@ DRY_RUN_TOOLS: dict[str, bool] = {
     "sort_modlist": True,
     "launch_game": False,
     "update_mods": False,
+    "download_workshop_mod": False,
+    "install_github_mod": False,
     "delete_mod": False,
 }
 

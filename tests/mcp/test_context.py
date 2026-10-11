@@ -217,3 +217,35 @@ def test_lost_gui_never_falls_back_to_disk_write(mcp_env: MCPEnv) -> None:
     with pytest.raises(MCPContextError, match="GUI state unavailable"):
         ctx.write_active_config(["ludeon.rimworld"])
     assert ctx.mods_config_path.read_bytes() == original
+
+
+def test_manual_edit_between_preview_and_commit_is_not_rebased(mcp_env: MCPEnv) -> None:
+    from app.ai.gui_bridge import GuiActionBridge
+
+    ctx = mcp_env.ctx
+    gui_ids = ["ludeon.rimworld", "test.moda"]
+    original = ctx.mods_config_path.read_bytes()
+    bridge = GuiActionBridge()
+    bridge.register_executor(
+        "get_modlist",
+        lambda p: {
+            "working": list(gui_ids),
+            "config_path": str(ctx.mods_config_path.resolve()),
+        },
+    )
+
+    def apply(params: dict[str, Any]) -> dict[str, Any]:
+        if params["expected_working"] != gui_ids:
+            return {"ok": False, "code": "revision_conflict"}
+        gui_ids[:] = params["package_ids"]
+        return {"written": len(gui_ids), "backup": None}
+
+    bridge.register_executor("apply_modlist", apply)
+    ctx.gui_bridge = bridge
+    ctx.modlist_state()  # The preview's snapshot/revision.
+    gui_ids.append("user.manual.edit")
+    ctx.set_working_ids(["ludeon.rimworld", "test.modb"])
+    with pytest.raises(MCPContextError, match="revision_conflict"):
+        ctx.commit_working()
+    assert gui_ids == ["ludeon.rimworld", "test.moda", "user.manual.edit"]
+    assert ctx.mods_config_path.read_bytes() == original

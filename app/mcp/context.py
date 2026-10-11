@@ -589,7 +589,11 @@ class MCPContext:
 
     def set_working_ids(self, package_ids: Iterable[str]) -> int:
         """Set the working list and bump the revision. Returns the revision."""
-        self.working_ids()  # ensure baseline + external-edit detection
+        # Keep the snapshot used by the caller's revision check. Re-reading
+        # here would acknowledge an intervening manual edit as our baseline,
+        # allowing the final GUI compare-and-save to overwrite that edit.
+        if self._working_ids is None:
+            self.working_ids()
         self._working_ids = [str(pid) for pid in package_ids]
         self._revision += 1
         return self._revision

@@ -88,6 +88,8 @@ def smoke_test(executable: Path) -> None:
                 send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
                 tools = receive(2)["tools"]
                 names = {tool["name"] for tool in tools}
+                if any(not (tool.get("description") or "").strip() for tool in tools):
+                    raise RuntimeError("Packaged MCP tool descriptions were stripped")
                 required = {
                     "get_status",
                     "get_modlist_state",

@@ -60,6 +60,7 @@ jobs:
     needs: pre-build
     if: inputs.skip_build != true
     permissions:
+      actions: read
       id-token: write
       contents: read
       attestations: write

@@ -337,4 +337,7 @@ jobs:
 
   post-build-test:
     needs: build
+    permissions:
+      contents: read
+      actions: read
     uses: ./.github/workflows/test_builds.yml

@@ -87,6 +87,7 @@ jobs:
       needs.detect-changes.outputs.app_changed == 'true'
       && github.event_name != 'pull_request'
     permissions:
+      actions: read
       id-token: write
       contents: read
       attestations: write
@@ -102,6 +103,7 @@ jobs:
       needs.detect-changes.outputs.app_changed == 'true'
       && github.event_name == 'pull_request'
     permissions:
+      actions: read
       id-token: write
       contents: read
       attestations: write

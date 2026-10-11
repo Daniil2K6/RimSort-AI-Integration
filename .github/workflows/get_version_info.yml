@@ -2,6 +2,10 @@ name: Get Version Info
 on:
   workflow_call:
     inputs:
+      source_ref:
+        description: "Source ref whose version and commit match the build artifacts"
+        type: string
+        default: ""
       type:
         description: "Versioning format"
         required: false
@@ -91,6 +95,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Get semantic version
         id: sem_version

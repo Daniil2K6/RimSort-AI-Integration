@@ -2,6 +2,10 @@ name: Build
 on:
   workflow_call:
     inputs:
+      source_ref:
+        description: "Source commit/ref to build"
+        type: string
+        default: ""
       version_format:
         description: "Versioning format"
         required: false
@@ -81,6 +85,7 @@ jobs:
         with:
           fetch-depth: 0
           submodules: recursive
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Add submodules to pythonpath
         id: pythonpath

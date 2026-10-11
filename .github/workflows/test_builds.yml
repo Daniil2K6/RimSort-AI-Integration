@@ -4,11 +4,20 @@
 name: Test Builds
 on:
   workflow_call: null
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Build run containing the artifacts to validate"
+        required: true
+        type: number
 
 permissions: {}
 
 jobs:
   test:
+    permissions:
+      contents: read
+      actions: read
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -60,7 +69,8 @@ jobs:
         if: ${{ github.event.inputs.run_id != null }}
         uses: actions/download-artifact@v8.0.1
         with:
-          pattern: ${{ matrix.env.ARTIFACT_KEY_GLOB }}
+          name: ${{ matrix.env.ARTIFACT_KEY }}
+          path: binary-artifact
           run-id: ${{ github.event.inputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -68,11 +78,12 @@ jobs:
         if: ${{ github.event.inputs.run_id == null }}
         uses: actions/download-artifact@v8.0.1
         with:
-          pattern: ${{ matrix.env.ARTIFACT_KEY_GLOB }}
+          name: ${{ matrix.env.ARTIFACT_KEY }}
+          path: binary-artifact
 
       - name: Un-tar artifact
         run: |
-          cd "${{ matrix.env.ARTIFACT_KEY }}"
+          cd binary-artifact
           tar -xf ./*.tar
         shell: bash
 
@@ -82,6 +93,8 @@ jobs:
         with:
           pattern: "${{ matrix.platform }}_${{ matrix.arch }}_appimage"
           path: appimage-test
+          run-id: ${{ github.event.inputs.run_id || github.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install libfuse2 for AppImage
         if: matrix.platform == 'Ubuntu-22.04'
@@ -109,10 +122,6 @@ jobs:
           fi
         shell: bash
 
-      - name: Test packaged MCP initialize, tools/list and tools/call
-        run: python packaging/test_mcp_binary.py "${{ steps.find.outputs.FOUND }}"
-        shell: bash
-
       - name: If Linux, install likely missing libs for gui
         if: ${{ matrix.platform == 'Ubuntu-22.04' || matrix.platform == 'Ubuntu-24.04' }}
         run: |
@@ -124,6 +133,10 @@ jobs:
         if: ${{ matrix.platform == 'Darwin' }}
         run: |
           brew install coreutils
+
+      - name: Test packaged MCP initialize, tools/list and tools/call
+        run: python packaging/test_mcp_binary.py "${{ steps.find.outputs.FOUND }}"
+        shell: bash
 
       - name: Run executable. Attempt to run the executable, waits 15 seconds, then kills it.
         run: |

@@ -14,12 +14,14 @@ from app.mcp.server import build_server
 from tests.mcp.conftest import MCPEnv
 
 EXPECTED_TOOLS = {
+    "apply_modlist_plan",
     "apply_modpack",
     "check_workshop_updates",
     "delete_mod",
     "get_active_modlist",
     "get_gui_state",
     "get_mod_details",
+    "get_modlist_state",
     "get_status",
     "gui_invoke_action",
     "gui_navigate",
@@ -32,6 +34,7 @@ EXPECTED_TOOLS = {
     "list_modpacks",
     "list_mods",
     "load_modpack",
+    "preview_modlist_changes",
     "save_modpack",
     "set_active_modlist",
     "set_instance",
@@ -194,6 +197,107 @@ def test_update_modlist_tool(mcp_env: MCPEnv) -> None:
     active = call(server, "get_active_modlist")
     assert "test.workshop" in active["mods"]
     assert "test.moda" not in active["mods"]
+
+
+def test_get_modlist_state_initial_synced(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    state = call(server, "get_modlist_state")
+    assert state["dirty"] is False
+    assert state["working"] == state["saved"]
+    assert state["revision"] == 0
+    assert state["working_count"] == 4
+
+
+def test_preview_modlist_changes_does_not_write(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    before = call(server, "get_active_modlist")["mods"]
+    preview = call(
+        server,
+        "preview_modlist_changes",
+        {"add": ["test.workshop"]},
+    )
+    assert preview["written"] is False
+    assert "test.workshop" in preview["resulting"]
+    assert preview["validation"]["ok"] is True
+    # Nothing was persisted: the on-disk list is untouched.
+    after = call(server, "get_active_modlist")["mods"]
+    assert after == before
+    assert "test.workshop" not in after
+
+
+def test_preview_full_replacement_and_move(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    target = ["ludeon.rimworld", "test.modb", "test.moda"]
+    preview = call(
+        server,
+        "preview_modlist_changes",
+        {"package_ids": target, "move_id": "test.moda", "move_to_index": 1},
+    )
+    assert preview["resulting"] == ["ludeon.rimworld", "test.moda", "test.modb"]
+    assert preview["written"] is False
+
+
+def test_apply_modlist_plan_persists_and_bumps_revision(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    target = ["ludeon.rimworld", "ludeon.rimworld.royalty", "test.modc"]
+    result = call(server, "apply_modlist_plan", {"package_ids": target})
+    assert result["ok"] is True
+    assert result["revision"] == 1
+    assert result["state"]["dirty"] is False
+    assert result["state"]["working"] == target
+    assert call(server, "get_active_modlist")["mods"] == target
+
+
+def test_apply_modlist_plan_revision_interlock(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    stale = call(server, "get_modlist_state")["revision"]  # 0
+    call(
+        server,
+        "apply_modlist_plan",
+        {"package_ids": ["ludeon.rimworld", "test.modc"]},
+    )
+    rejected = call(
+        server,
+        "apply_modlist_plan",
+        {
+            "package_ids": ["ludeon.rimworld", "test.moda"],
+            "expected_revision": stale,
+        },
+    )
+    assert rejected["ok"] is False
+    assert rejected["code"] == "revision_mismatch"
+    assert rejected["current"]["revision"] == 1
+    # The rejected plan did not overwrite the saved list.
+    assert call(server, "get_active_modlist")["mods"] == [
+        "ludeon.rimworld",
+        "test.modc",
+    ]
+
+
+def test_apply_modlist_plan_empty_and_unknown(mcp_env: MCPEnv) -> None:
+    server = build_server(mcp_env.ctx)
+    with pytest.raises(ToolError, match="must not be empty"):
+        call(server, "apply_modlist_plan", {"package_ids": []})
+    with pytest.raises(ToolError, match="Unknown packageIds"):
+        call(
+            server,
+            "apply_modlist_plan",
+            {"package_ids": ["ludeon.rimworld", "nope.mod"]},
+        )
+
+
+def test_external_edit_bumps_revision(mcp_env: MCPEnv) -> None:
+    """A GUI write to ModsConfig.xml invalidates the working state (interlock)."""
+    server = build_server(mcp_env.ctx)
+    call(server, "get_modlist_state")  # establish the saved snapshot
+    # Simulate a concurrent GUI edit bypassing the agent.
+    mcp_env.ctx.write_active_config(
+        ["ludeon.rimworld", "test.modb"], backup=False
+    )
+    state = call(server, "get_modlist_state")
+    assert state["revision"] == 1
+    assert state["working"] == ["ludeon.rimworld", "test.modb"]
+    assert state["dirty"] is False  # working resynced to the new saved list
 
 
 def test_validate_modlist_tool(mcp_env: MCPEnv) -> None:

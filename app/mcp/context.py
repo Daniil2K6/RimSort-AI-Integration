@@ -93,6 +93,13 @@ class MCPContext:
         self._compiled: CompiledDependencyData | None = None
         self.game_version: str = "Unknown"
         self.last_scan_error: str | None = None
+        # Working vs saved active-list state (Stage D). ``_working_ids`` is the
+        # in-memory list the agent edits; it starts synced to the saved
+        # ModsConfig.xml. ``_revision`` bumps on every working-state change and
+        # on detected external (GUI) edits, so a stale apply is rejected.
+        self._working_ids: list[str] | None = None
+        self._saved_signature: tuple[str, ...] | None = None
+        self._revision: int = 0
 
     @staticmethod
     def _default_settings_path() -> Path:
@@ -454,6 +461,77 @@ class MCPContext:
             "written": len(package_id_list),
             "backup": str(backup_path) if backup_path is not None else None,
         }
+
+    # ---- Working vs saved state (Stage D) ----
+
+    def _current_saved_ids(self) -> list[str]:
+        config = self.read_active_config()
+        if config is None:
+            return []
+        return [str(pid) for pid in config.activeMods]
+
+    def _detect_external_edit(self) -> bool:
+        """Bump the revision when ModsConfig.xml changed outside our writes."""
+        saved = self._current_saved_ids()
+        signature = tuple(saved)
+        if self._saved_signature is None:
+            self._saved_signature = signature
+            return False
+        if signature != self._saved_signature:
+            # External (GUI / other tool) edit detected: invalidate working
+            # state and bump revision so a stale apply is rejected.
+            self._saved_signature = signature
+            self._working_ids = list(saved)
+            self._revision += 1
+            return True
+        return False
+
+    def sync_working_from_saved(self) -> list[str]:
+        """Reset the working list to the saved list and record the snapshot."""
+        saved = self._current_saved_ids()
+        self._working_ids = list(saved)
+        self._saved_signature = tuple(saved)
+        return list(saved)
+
+    def working_ids(self) -> list[str]:
+        """Current working list (synced from disk on first use)."""
+        self._detect_external_edit()
+        if self._working_ids is None:
+            self.sync_working_from_saved()
+        assert self._working_ids is not None
+        return list(self._working_ids)
+
+    def set_working_ids(self, package_ids: Iterable[str]) -> int:
+        """Set the working list and bump the revision. Returns the revision."""
+        self.working_ids()  # ensure baseline + external-edit detection
+        self._working_ids = [str(pid) for pid in package_ids]
+        self._revision += 1
+        return self._revision
+
+    def modlist_state(self) -> dict[str, Any]:
+        """Working vs saved active list plus the current revision."""
+        self._detect_external_edit()
+        working = self.working_ids()
+        saved = self._current_saved_ids()
+        return {
+            "working": working,
+            "saved": saved,
+            "working_count": len(working),
+            "saved_count": len(saved),
+            "revision": self._revision,
+            "dirty": working != saved,
+        }
+
+    def commit_working(self, backup: bool = True) -> dict[str, Any]:
+        """Atomically persist the working list and mark it clean.
+
+        Marks saved == working and refreshes the snapshot so the next
+        external-edit check compares against what we just wrote.
+        """
+        working = self.working_ids()
+        result = self.write_active_config(working, backup=backup)
+        self._saved_signature = tuple(working)
+        return {**result, "revision": self._revision, "dirty": False}
 
     # ---- Resolution ----
 

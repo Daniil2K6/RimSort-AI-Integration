@@ -24,6 +24,7 @@ from app.controllers.sort_controller import Sorter
 from app.mcp.context import MCPContext
 from app.models.metadata.metadata_structure import (
     AboutXmlMod,
+    CaseInsensitiveStr,
     ListedMod,
     ModsConfig,
     ModType,
@@ -72,7 +73,23 @@ def _resolved_ids(ctx: MCPContext) -> tuple[list[str], list[str]]:
 
 def validate_active_list(ctx: MCPContext) -> dict[str, Any]:
     """Validate the active mod list (missing, duplicates, order, cycles)."""
-    config = _require_config(ctx)
+    return _validate_config(ctx, _require_config(ctx))
+
+
+def validate_candidate_ids(ctx: MCPContext, package_ids: list[str]) -> dict[str, Any]:
+    """Validate a candidate active list without touching disk (Stage D)."""
+    existing = ctx.read_active_config()
+    known = [str(x) for x in existing.knownExpansions] if existing is not None else []
+    candidate = ModsConfig(
+        version=ctx.game_version if ctx.game_version != "Unknown" else "1.5",
+        activeMods=[CaseInsensitiveStr(pid) for pid in package_ids],
+        knownExpansions=[CaseInsensitiveStr(x) for x in known],
+    )
+    return _validate_config(ctx, candidate)
+
+
+def _validate_config(ctx: MCPContext, config: ModsConfig) -> dict[str, Any]:
+    """Validate a ModsConfig-shaped active list (missing, duplicates, order)."""
     raw_ids = [str(pid) for pid in config.activeMods]
     duplicates = sorted({pid for pid, count in Counter(raw_ids).items() if count > 1})
 

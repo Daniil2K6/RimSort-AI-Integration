@@ -11,7 +11,7 @@ lands.
 | A | Real streaming + correct cancellation | **Done** |
 | B | Structured events + live action journal | **Done** |
 | C | GUI action bridge + stable ID registry | **Done** |
-| D | Working/saved mod-list state + preview/apply | Pending |
+| D | Working/saved mod-list state + preview/apply | **Done** |
 | E | Batch/dependency/conflict/log MCP tools | Pending |
 | F | Token economy (prompt/session/context budget) | Pending |
 | G | IPC bridge (`--attach-gui`) | Pending |
@@ -129,7 +129,34 @@ SurfaceId table, and headless `gui_unavailable` for every GUI tool.
 
 ## Stage D — Working/saved mod-list state + preview/apply
 
-Pending.
+Done. The agent now edits an in-memory *working* list separate from the saved
+ModsConfig.xml, with revisions and a concurrent-edit interlock.
+
+- `MCPContext` gains a working-state layer: `working_ids` / `set_working_ids` /
+  `modlist_state` / `commit_working`, a `_revision` counter, and
+  `_detect_external_edit` which snapshots the saved list and bumps the revision
+  whenever ModsConfig.xml changes outside our writes (a concurrent GUI edit).
+  Working state starts synced to disk and resets to the new saved list on an
+  external edit, so a stale apply is rejected — never silently overwritten.
+- New tools:
+  - `get_modlist_state` — working vs saved lists + revision + dirty flag.
+  - `preview_modlist_changes` — full replacement or add/remove/move from the
+    working list, returning the complete resulting order plus validation
+    diagnostics. Writes nothing and does not bump the revision.
+  - `apply_modlist_plan` — validates a complete target list, refuses empty or
+    unknown ids (unless `allow_missing`), then commits atomically (single
+    backup + write via `commit_working`) and marks working == saved. Passing a
+    stale `expected_revision` rejects with the current state (interlock).
+- Validation reuses the existing resolver/dependency diagnostics: the core of
+  `validate_active_list` was extracted into `_validate_config` and a new
+  `validate_candidate_ids` runs the same checks on an arbitrary candidate list
+  without touching disk. No raw ModsConfig writes; backups go through the
+  existing prune-limited backup path.
+
+Verified: ruff/format/mypy clean; full suite 1660 passed / 1 skipped; jscpd 0
+clones. New tests cover initial sync, preview-without-write, full
+replacement/move, apply + revision bump, revision interlock, empty/unknown
+rejection, and external-edit detection.
 
 ## Stage E — Batch / dependency / conflict / log MCP tools
 

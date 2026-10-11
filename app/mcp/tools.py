@@ -279,6 +279,107 @@ def register_tools(
         )
 
     @mcp.tool()
+    def get_modlist_state() -> dict[str, Any]:
+        """Working vs saved active list plus the revision counter (Stage D).
+
+        working is what the agent edits; saved is ModsConfig.xml on disk.
+        dirty=true means they differ. revision bumps on every change and on
+        detected external (GUI) edits — pass it to apply_modlist_plan.
+        """
+        return ctx.modlist_state()
+
+    @mcp.tool()
+    def preview_modlist_changes(
+        package_ids: list[str] | None = None,
+        add: list[str] | None = None,
+        remove: list[str] | None = None,
+        move_id: str = "",
+        move_to_index: int = -1,
+    ) -> dict[str, Any]:
+        """Show the complete resulting list for a change without writing it.
+
+        Start from the working list (or a full package_ids replacement), apply
+        add/remove/move, and return the resulting order plus validation
+        diagnostics. Nothing is persisted and the revision is not bumped.
+        """
+        if package_ids is not None:
+            candidate = [str(pid) for pid in package_ids]
+        else:
+            candidate = ctx.working_ids()
+        if add:
+            for pid in add:
+                if not any(pid.lower() == e.lower() for e in candidate):
+                    candidate.append(pid)
+        if remove:
+            remove_set = {pid.lower() for pid in remove}
+            candidate = [pid for pid in candidate if pid.lower() not in remove_set]
+        if move_id:
+            src = next(
+                (
+                    i
+                    for i, pid in enumerate(candidate)
+                    if pid.lower() == move_id.lower()
+                ),
+                -1,
+            )
+            if src == -1:
+                raise ToolError(f"move_id {move_id!r} is not in the list")
+            target = move_to_index if move_to_index >= 0 else len(candidate) - 1
+            target = min(max(target, 0), max(len(candidate) - 1, 0))
+            candidate.insert(target, candidate.pop(src))
+        diagnostics = modops.validate_candidate_ids(ctx, candidate)
+        return {
+            "resulting": candidate,
+            "count": len(candidate),
+            "validation": diagnostics,
+            "written": False,
+        }
+
+    @mcp.tool()
+    def apply_modlist_plan(
+        package_ids: list[str],
+        expected_revision: int | None = None,
+        allow_missing: bool = False,
+        backup: bool = True,
+    ) -> dict[str, Any]:
+        """Atomically persist a complete target list and mark it saved (Stage D).
+
+        Validates before committing; refuses an empty list. Pass the revision
+        from get_modlist_state/preview to interlock with concurrent GUI edits —
+        a mismatch rejects without writing and returns the current state. On
+        success the working and saved lists match and the revision advances.
+        """
+        if not package_ids:
+            raise ToolError("package_ids must not be empty")
+        state = ctx.modlist_state()
+        if expected_revision is not None and expected_revision != state["revision"]:
+            return {
+                "ok": False,
+                "code": "revision_mismatch",
+                "error": (
+                    f"Working list changed (expected revision "
+                    f"{expected_revision}, current {state['revision']})."
+                ),
+                "current": state,
+            }
+        if not allow_missing:
+            unknown = sorted({pid for pid in package_ids if not ctx.paths_for_pid(pid)})
+            if unknown:
+                raise ToolError(
+                    "Unknown packageIds (use allow_missing=true to write anyway): "
+                    + ", ".join(unknown)
+                )
+        ctx.set_working_ids(package_ids)
+        result = ctx.commit_working(backup=backup)
+        return {
+            "ok": True,
+            "written": result["written"],
+            "backup": result["backup"],
+            "revision": result["revision"],
+            "state": ctx.modlist_state(),
+        }
+
+    @mcp.tool()
     def validate_modlist() -> dict[str, Any]:
         """Check the active list: missing mods, duplicates, load-order
         violations (loadAfter/loadBefore), incompatible pairs, cycles.

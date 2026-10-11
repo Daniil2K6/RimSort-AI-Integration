@@ -201,6 +201,27 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Verify existing release tag
+        id: release_commit
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+          SOURCE_COMMIT: ${{ needs.pre-build.outputs.current_commit }}
+        run: |
+          tag_refs="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
+          if [[ -n "$tag_refs" ]]; then
+            git fetch --depth=1 origin "refs/tags/$RELEASE_TAG"
+            tag_commit="$(git rev-parse 'FETCH_HEAD^{commit}')"
+            if [[ "$tag_commit" != "$SOURCE_COMMIT" ]]; then
+              echo "Release tag does not match the verified build source commit"
+              exit 1
+            fi
+            # Leave an existing tag's target unchanged when updating its release.
+            echo "commit=" >> "$GITHUB_OUTPUT"
+          else
+            echo "commit=$SOURCE_COMMIT" >> "$GITHUB_OUTPUT"
+          fi
+        shell: bash
+
       - name: Create Release
         uses: ncipollo/release-action@339a81892b84b4eeb0f6e744e4574d79d0d9b8dd # v1.21.0
         id: release
@@ -216,7 +237,7 @@ jobs:
           omitNameDuringUpdate: ${{ !inputs.replace_name_during_update }}
           omitBodyDuringUpdate: ${{ !inputs.replace_body_during_update }}
           removeArtifacts: true
-          commit: ${{ needs.pre-build.outputs.current_commit }}
+          commit: ${{ steps.release_commit.outputs.commit }}
 
       - name: Echo Release URL
         run: |
